@@ -4,10 +4,8 @@ __pycache__/
 venv/
 *.db
 static/fallback_audio/*.wav
-<<<<<<< HEAD
 official_doc
 Claude outputs
-=======
 
 # Pre-human-review quality gate (scripts/gate.sh)
 .gate/
@@ -18,4 +16,3 @@ ai-review.json
 ai-review.request.txt
 .ruff_cache/
 .mypy_cache/
->>>>>>> dev_chakravardhan

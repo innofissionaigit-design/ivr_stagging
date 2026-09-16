@@ -13,10 +13,13 @@ distinct "I couldn't check that right now" reply instead of a false
 """
 from __future__ import annotations
 
-<<<<<<< HEAD
+import functools
+import inspect
 import json
 
 import httpx
+
+from agent import call_audit
 
 # story title: The model never originates a fact
 # user story: As a clinical lead, I want every price, date and identifier
@@ -48,50 +51,17 @@ from agent.tool_contract import ToolContractError, validate as _validate
 # to say so. See agent/tool_outcome.py for why not main.py.
 from agent import tool_outcome
 
-# story title: Numbers are never rounded, reordered or approximated
-# user story: As a patient, I want the exact figure, so that what I am quoted
-#   is what I pay.
-# acceptance criteria: Figures pass from the validated response into the
-#   template unchanged and are verbalised digit-faithfully. A test asserts
-#   byte-level equality between the tool value and the spoken value for a
-#   corpus of amounts, dates and identifiers.
-#
-# Ported from dev_sourav. The whole fix is the parse_float argument, and it
-# earns its place: httpx's r.json() uses json.loads' default float parsing, and
-# float("100.00") == float("100.0") -- so a trailing zero is gone before any
-# template, any verbaliser or any speech stage could possibly preserve it. No
-# amount of care downstream can put a digit back that was discarded at the
-# boundary. Money is precisely the kind of figure this loses digits on, on
-# every value whose decimals happen to end in zero, silently, every time.
-#
-# Whole numbers are untouched: no decimal point in the source means no float in
-# the first place, so 650 stays int 650 exactly as before.
-#
-# It also composes with this module's own failure handling rather than fighting
-# it -- json.loads raises JSONDecodeError, which subclasses ValueError, so a
-# malformed body still lands in the ValueError arm each method already has and
-# is still reported as "the system cannot be reached".
-#
-# HONEST STATUS ON THIS BRANCH: dormant. clinic-api/models.py declares
-# rate_inr as Column(Integer), so the live schema cannot emit a decimal rate
-# today and nothing in production exercises this path. Correct and defensive,
-# and it costs one keyword argument, so it goes in now rather than being
-# remembered later when a rate first gains paise.
-def _parse_exact(response: httpx.Response) -> dict:
-    """Parse a JSON body exactly as httpx.Response.json() does, except that a
-    number written with a decimal point keeps its literal source digits."""
-    return json.loads(response.text, parse_float=str)
-
 # Ported from dev_sourav -- backs reference_cache_snapshot()/_ref_key() below.
 from agent.reference_data_cache import DEFAULT_TTL_S, TTLCache
-=======
-import functools
-import inspect
 
-import httpx
-
-from agent import call_audit
->>>>>>> dev_chakravardhan
+# NOTE: _parse_exact() itself is defined once, just below DEFAULT_LIMITS --
+# dev_sourav's original version of this module defined it a second time,
+# right here, with an identical body but a shorter docstring. Since Python
+# rebinds the module-level name on each `def`, that earlier copy was always
+# dead code (silently shadowed the moment the module finished importing);
+# it is dropped here rather than kept as an unreachable duplicate. See that
+# surviving definition's own docstring for the parse_float bug it fixes --
+# nothing about the fix changes by having only one copy of it.
 
 DEFAULT_TIMEOUT_S = 4.0  # a phone caller will not wait much longer than this per lookup
 
@@ -219,15 +189,11 @@ class ClinicToolsClient:
     def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S,
                  cache_ttl_s: float = DEFAULT_TTL_S):
         self.base_url = base_url.rstrip("/")
-<<<<<<< HEAD
-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
-        self.outcomes = tool_outcome.OutcomeCounter()
-        self._ref_cache = TTLCache(ttl_s=cache_ttl_s)
-=======
         self._client = httpx.AsyncClient(
             base_url=self.base_url, timeout=timeout_s, limits=DEFAULT_LIMITS,
         )
->>>>>>> dev_chakravardhan
+        self.outcomes = tool_outcome.OutcomeCounter()
+        self._ref_cache = TTLCache(ttl_s=cache_ttl_s)
 
     async def aclose(self):
         await self._client.aclose()

@@ -35,21 +35,39 @@ import threading
 
 import httpx
 
-<<<<<<< HEAD
+from agent import language as _lang_mod
 from agent import speakability
 from agent.reply_templates import UNSPEAKABLE_ESCALATION
-=======
-from agent import language as _lang_mod
 
-from agent.bn_normalize import unspeakable_spans, verbalize
->>>>>>> dev_chakravardhan
+# NOTE: dev_chakravardhan's own draft of this module imported
+# unspeakable_spans/verbalize from agent.bn_normalize directly, to compute
+# the speakable text itself. That is the same job agent/speakability.py's
+# check() already does below (SPEAKABILITY_ENFORCE shadow mode, stats,
+# UnspeakableReply) -- so the bn_normalize import is dropped as redundant
+# rather than kept as a second, unused path to the same result.
 
 logger = logging.getLogger("tts")
 
 TTS_URL = os.environ.get("TTS_URL", "http://localhost:8002/synthesize")
 TTS_TIMEOUT_S = float(os.environ.get("TTS_TIMEOUT_S", "30"))
 
-<<<<<<< HEAD
+# Caps how many synthesis requests this process will have in flight at once.
+#
+# tts_server.py holds a single global _synth_lock around inference (one GPU
+# model, and _render() mutates its shared length_scale immediately before
+# calling it), so the server does exactly ONE synthesis at a time no matter
+# how many arrive. Requests beyond that do not get served faster by being
+# sent -- they just sit on that lock holding a connection open at both ends.
+#
+# 4 keeps the server's queue primed so it is never idle between clips, while
+# stopping a peak-hour burst from opening a connection per caller against a
+# service that can only ever work on one of them.
+TTS_CONCURRENCY = int(os.environ.get("TTS_CONCURRENCY", "4"))
+
+# Process-wide, not per-client: the ceiling belongs to the TTS SERVER, and
+# it does not care how many client objects this process happens to hold.
+_tts_gate = asyncio.Semaphore(TTS_CONCURRENCY)
+
 # STORY [Answer Quality and Grounding]
 # As a patient, I want to hear the whole sentence, so that I am
 # not left guessing what the agent tried to say.
@@ -86,24 +104,6 @@ class UnspeakableReply(Exception):
         self.dropped = tuple(dropped)
         self.text = text
         super().__init__(f"unspeakable spans would be dropped: {self.dropped}")
-=======
-# Caps how many synthesis requests this process will have in flight at once.
-#
-# tts_server.py holds a single global _synth_lock around inference (one GPU
-# model, and _render() mutates its shared length_scale immediately before
-# calling it), so the server does exactly ONE synthesis at a time no matter
-# how many arrive. Requests beyond that do not get served faster by being
-# sent -- they just sit on that lock holding a connection open at both ends.
-#
-# 4 keeps the server's queue primed so it is never idle between clips, while
-# stopping a peak-hour burst from opening a connection per caller against a
-# service that can only ever work on one of them.
-TTS_CONCURRENCY = int(os.environ.get("TTS_CONCURRENCY", "4"))
-
-# Process-wide, not per-client: the ceiling belongs to the TTS SERVER, and
-# it does not care how many client objects this process happens to hold.
-_tts_gate = asyncio.Semaphore(TTS_CONCURRENCY)
->>>>>>> dev_chakravardhan
 
 FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback_audio")
 
@@ -217,12 +217,8 @@ class TTSClient:
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
 
-<<<<<<< HEAD
     async def synthesize(self, text_bn: str, speech_rate: str = "default",
                          language: str | None = None) -> bytes:
-=======
-    async def synthesize(self, text_bn: str, lang: str | None = None) -> bytes:
->>>>>>> dev_chakravardhan
         """Returns WAV bytes, or raises. Callers should catch and fall back
         to `fallback_audio()` -- see main.py's _speak().
 
@@ -231,10 +227,10 @@ class TTSClient:
         sends no override and leaves tts_server on its own tuned value -- so
         this path is a no-op until Call Intelligence exists.
 
-<<<<<<< HEAD
         language likewise comes from CallState and is likewise always None
         today. It is threaded through now because the speakability rule is
-        only valid for a Bengali matrix -- see agent/speakability.py.
+        only valid for a Bengali matrix -- see agent/speakability.py -- and
+        because it is now also part of the cache key (see below).
         """
         # STORY [Answer Quality and Grounding]
         # As a patient, I want to hear the whole sentence, so that I am
@@ -263,9 +259,9 @@ class TTSClient:
             if SPEAKABILITY_ENFORCE:
                 raise UnspeakableReply(verdict.dropped, text_bn)
 
-        key = self._key(spoken, speech_rate)
-=======
-        # THE LANGUAGE IS PART OF THE CACHE KEY, not just the text.
+        # ADDED BY CHAKRAVARDHAN -- THE LANGUAGE IS PART OF THE CACHE KEY,
+        # not just the text (speech_rate already was, via _key()'s own
+        # signature).
         #
         # Two languages routinely produce byte-identical spoken strings --
         # a bare time ("18:15"), a confirmation id, a digit sequence read
@@ -273,8 +269,7 @@ class TTSClient:
         # caller's Bengali audio would be replayed to the next caller in
         # Hindi, and it would sound like a working system speaking the
         # wrong language rather than like a bug.
-        key = self._key(f"{_lang_mod.resolve(lang)}::{spoken}")
->>>>>>> dev_chakravardhan
+        key = self._key(f"{_lang_mod.resolve(language)}::{spoken}", speech_rate)
         cached = self._cache_get(key)
         if cached is not None:
             return cached
@@ -309,18 +304,21 @@ class TTSClient:
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             try:
-<<<<<<< HEAD
-                r = await self._client.post(self.base_url, json={"text": spoken, "lang": "bn",
-                                            "speed": SPEECH_RATE_SCALE.get(speech_rate)})
-=======
                 # Gate only the network call. Cache hits returned above are
                 # never gated -- they are the fast path and cost nothing.
+                #
+                # ADDED BY CHAKRAVARDHAN -- "lang" is resolved to the actual
+                # caller language rather than hardcoded "bn": the hardcoded
+                # value spoke every reply in Bengali regardless of what
+                # language was actually detected. "speed" (SPEECH_RATE_SCALE)
+                # is kept from the pre-existing speech_rate story below it --
+                # dropping it would silently lose that feature.
                 async with _tts_gate:
                     r = await self._client.post(
                         self.base_url,
-                        json={"text": spoken, "lang": _lang_mod.resolve(lang)},
+                        json={"text": spoken, "lang": _lang_mod.resolve(language),
+                              "speed": SPEECH_RATE_SCALE.get(speech_rate)},
                     )
->>>>>>> dev_chakravardhan
                 r.raise_for_status()
                 wav = r.content
                 self._cache_put(key, wav)

@@ -27,13 +27,10 @@ account rather than assumed:
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
 import logging
-import re
-=======
 import os
 import random
->>>>>>> dev_chakravardhan
+import re
 import time
 import urllib.request
 
@@ -42,7 +39,67 @@ logger = logging.getLogger("llm")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
-<<<<<<< HEAD
+# ADDED BY CHAKRAVARDHAN -- PER-ATTEMPT ceiling, and the ceiling for the
+# WHOLE turn across retries.
+#
+# These replace a bare 90s per-attempt timeout with no total cap. With
+# max_retries=2 (three attempts) that arrangement allowed a single turn to
+# occupy a worker for 270 SECONDS -- four and a half minutes of a live phone
+# call spent in silence behind the half-duplex gate, long past the point any
+# caller has hung up, while still holding its thread and its slot in Ollama's
+# queue the entire time.
+#
+# The 90s figure was calibrated against a COLD model: llm.py measured a
+# cold-loaded qwen2.5:7b at 47s just to answer "Say OK". That is the wrong
+# thing to size for now. OLLAMA_KEEP_ALIVE=-1 (see deploy/env.vast.sh) pins
+# the model resident, so cold starts are a startup-only event, and a warm
+# generation for this prompt measures ~1-3s.
+#
+# What actually produces a slow turn today is QUEUEING, not loading:
+# OLLAMA_NUM_PARALLEL=2 means only two generations run at once and the rest
+# wait INSIDE Ollama where this process cannot see them. A caller stuck in
+# that queue looks exactly like a cold start from here -- which is why a
+# timeout sized for cold starts is precisely the wrong backstop for it. It
+# lets the queue grow instead of shedding load, and every retry that fires
+# adds another entry to the same queue it is already stuck behind.
+#
+# 20s is still ~7x the warm path, so it does not trip on normal slowness; it
+# only fires when something is genuinely wrong. The 25s total budget is the
+# real protection: it bounds the whole turn regardless of how the retries
+# fall, so failing fast to the "একটু সমস্যা হচ্ছে" apology beats holding a
+# caller in silence. Both are env-tunable so they can be tightened against
+# real peak traffic without a redeploy.
+OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "20"))
+OLLAMA_TURN_BUDGET_S = float(os.environ.get("OLLAMA_TURN_BUDGET_S", "25"))
+
+# Retry backoff. Previously there was none: a failed attempt re-fired the
+# instant it returned.
+#
+# That is the wrong reflex against this particular dependency. The failure
+# being retried is usually not "the request was lost" but "Ollama is at
+# OLLAMA_NUM_PARALLEL and everything else is queued behind it". Retrying
+# immediately adds another entry to the very queue that caused the failure,
+# and because every concurrent caller's retries fire on the same schedule
+# they arrive together -- a thundering herd, synchronized by the shared
+# outage that produced it. Load spikes hardest exactly when the service is
+# least able to absorb it.
+#
+# Exponential growth spreads the retries out; the jitter de-synchronizes
+# callers from each other so they stop arriving in a block. Both are small
+# because the whole turn budget is only OLLAMA_TURN_BUDGET_S -- this is
+# breathing room between attempts, not a real hold-off, and the sleep below
+# is always clamped so it can never eat the budget the next attempt needs.
+_BACKOFF_BASE_S = 0.25
+_BACKOFF_CAP_S = 2.0
+_BACKOFF_JITTER_S = 0.25
+
+
+def _backoff_s(attempt: int) -> float:
+    """Delay before the attempt AFTER this one. attempt is 1-based."""
+    return (min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S)
+            + random.uniform(0.0, _BACKOFF_JITTER_S))
+
+
 # ADDED BY SOURAV -- "Lab Report Status & Secure Delivery" combined story
 # adds "report_status" (Rule 1-3, 13, 14) and "report_send" (Rule 4-9,
 # 15-17). Both reuse the EXISTING "test_name" and "phone" slots below --
@@ -128,7 +185,16 @@ VALID_INTENTS = {"test_rate", "test_sample", "test_duration", "test_preparation"
                   # (both added below). See main.py's dispatch branch and
                   # agent/callback_flow.py's module docstring for the
                   # availability-check and persistence design.
-                  "request_callback"}
+                  "request_callback",
+                  # ADDED BY CHAKRAVARDHAN -- four intents from stories this
+                  # branch added independently of dev_sourav's (history
+                  # verification / patient timeline / message channel /
+                  # notifications work -- see clinic-api/history_service.py,
+                  # clinic-api/reminder_service.py, agent/message_service.py).
+                  # Real dispatch branches for all four already exist in
+                  # main.py/main_pcm.py (elif intent == ...), so dropping
+                  # them here would make the model unable to ever name them.
+                  "payment", "report_collection", "patient_history", "my_bookings"}
 
 # story title: The model never originates a fact
 # user story: As a clinical lead, I want every price, date and identifier to
@@ -160,73 +226,23 @@ _DATE_EXPR_LIST = ", ".join(sorted(DATE_EXPRESSIONS))
 # answer_ledger, main.py's dispatch), and "parts" is the new, optional list a
 # second (or third) question shows up in. parts[0] is guaranteed to mirror the
 # top level, so nothing downstream has to learn two shapes.
-SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's Bengali phone assistant. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in Bengali script.
-=======
-# PER-ATTEMPT ceiling, and the ceiling for the WHOLE turn across retries.
+# ADDED BY CHAKRAVARDHAN -- "Callers speak BENGALI, HINDI or ENGLISH, and
+# often mix them" replaces the narrower "Bengali phone assistant" framing
+# this opening line used to have, now that Hindi is a real, supported
+# caller language elsewhere in this codebase (agent/slot_parse.py's Hindi
+# affirmative/negative/date vocabulary, agent/tts.py's resolved-language
+# routing) -- the extractor's own prompt should not still imply Bengali is
+# the only language a caller might use.
 #
-# These replace a bare 90s per-attempt timeout with no total cap. With
-# max_retries=2 (three attempts) that arrangement allowed a single turn to
-# occupy a worker for 270 SECONDS -- four and a half minutes of a live phone
-# call spent in silence behind the half-duplex gate, long past the point any
-# caller has hung up, while still holding its thread and its slot in Ollama's
-# queue the entire time.
-#
-# The 90s figure was calibrated against a COLD model: llm.py measured a
-# cold-loaded qwen2.5:7b at 47s just to answer "Say OK". That is the wrong
-# thing to size for now. OLLAMA_KEEP_ALIVE=-1 (see deploy/env.vast.sh) pins
-# the model resident, so cold starts are a startup-only event, and a warm
-# generation for this prompt measures ~1-3s.
-#
-# What actually produces a slow turn today is QUEUEING, not loading:
-# OLLAMA_NUM_PARALLEL=2 means only two generations run at once and the rest
-# wait INSIDE Ollama where this process cannot see them. A caller stuck in
-# that queue looks exactly like a cold start from here -- which is why a
-# timeout sized for cold starts is precisely the wrong backstop for it. It
-# lets the queue grow instead of shedding load, and every retry that fires
-# adds another entry to the same queue it is already stuck behind.
-#
-# 20s is still ~7x the warm path, so it does not trip on normal slowness; it
-# only fires when something is genuinely wrong. The 25s total budget is the
-# real protection: it bounds the whole turn regardless of how the retries
-# fall, so failing fast to the "একটু সমস্যা হচ্ছে" apology beats holding a
-# caller in silence. Both are env-tunable so they can be tightened against
-# real peak traffic without a redeploy.
-OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "20"))
-OLLAMA_TURN_BUDGET_S = float(os.environ.get("OLLAMA_TURN_BUDGET_S", "25"))
-
-# Retry backoff. Previously there was none: a failed attempt re-fired the
-# instant it returned.
-#
-# That is the wrong reflex against this particular dependency. The failure
-# being retried is usually not "the request was lost" but "Ollama is at
-# OLLAMA_NUM_PARALLEL and everything else is queued behind it". Retrying
-# immediately adds another entry to the very queue that caused the failure,
-# and because every concurrent caller's retries fire on the same schedule
-# they arrive together -- a thundering herd, synchronized by the shared
-# outage that produced it. Load spikes hardest exactly when the service is
-# least able to absorb it.
-#
-# Exponential growth spreads the retries out; the jitter de-synchronizes
-# callers from each other so they stop arriving in a block. Both are small
-# because the whole turn budget is only OLLAMA_TURN_BUDGET_S -- this is
-# breathing room between attempts, not a real hold-off, and the sleep below
-# is always clamped so it can never eat the budget the next attempt needs.
-_BACKOFF_BASE_S = 0.25
-_BACKOFF_CAP_S = 2.0
-_BACKOFF_JITTER_S = 0.25
-
-
-def _backoff_s(attempt: int) -> float:
-    """Delay before the attempt AFTER this one. attempt is 1-based."""
-    return (min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S)
-            + random.uniform(0.0, _BACKOFF_JITTER_S))
-
-VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
-                 "doctors_by_department", "payment", "report_collection",
-                 "patient_history", "my_bookings", "smalltalk", "unclear"}
-
+# NOT taken from the same branch: its alternate "date" slot rule, which had
+# the model resolve relative time words ("কাল"/"tomorrow") to an ISO
+# yyyy-mm-dd itself. That is exactly the failure mode this file's own
+# module docstring and the "date_expr" rule below exist to rule out -- the
+# model does not know today's date, so any calendar date it produced would
+# be invented, the same class of bug as the Naloxone hallucination this
+# docstring opens with. date_expr's closed vocabulary + agent/date_calc.py
+# (deterministic code, not the model) is the one date-resolution path kept.
 SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's phone assistant. Callers speak BENGALI, HINDI or ENGLISH, and often mix them -- an English clinical term inside a Bengali sentence is normal, not an error. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched words written in another script.
->>>>>>> dev_chakravardhan
 
 You do NOT have a calendar and you are not given today's date. You never need one: when the caller mentions a day, you say WHICH EXPRESSION they used and a separate calculator works out the actual dates afterwards.
 
@@ -241,7 +257,6 @@ INTENTS (one per part -- see MULTI-PART below):
 - "doctor_schedule": caller is asking about a named doctor's GENERAL, RECURRING weekly schedule -- which day(s) of the week they usually sit, with NO reference to today/tomorrow/a specific date and NOT asking for the next available date either (e.g. "Dr Sen কবে বসেন", "ডাক্তার সেন কোন কোন দিন বসেন", "which days does Dr Sen sit", "Dr Sen ka schedule kya hai", "Dr Sen kon din boshen"). If the caller's question is tied to a specific day, or to "next available", use "doctor_availability" instead.
 - "doctors_by_department": caller is asking for doctors in a specific department (e.g., "ortho", "cardiology", "অর্থো").
 - "book_appointment": caller wants to book, confirm, or reschedule an appointment.
-<<<<<<< HEAD
 - "report_status": caller is asking whether their LAB REPORT is ready, not yet ready, still processing, or asking about it generally (e.g. "is my CBC report ready", "amar report ready hoyeche", "রিপোর্ট তৈরি হয়েছে?", "আসতে হবে নাকি রিপোর্ট হয়ে গেছে" -- asking to check before travelling counts as this intent too). Use this whenever the caller is asking ABOUT a report's status, even indirectly (e.g. asking whether they need to visit the clinic). Do NOT use this if they are asking about a test's PRICE or SAMPLE requirement instead -- those are "test_rate"/"test_sample".
 - "report_send": caller wants their report DELIVERED/SENT to them (e.g. "send my report", "report ta phone e pathiye dao", "রিপোর্টটা ফোনে পাঠিয়ে দিন", "amar report ta pete pari ki") -- opening directly with a delivery request, not first asking whether it's ready. If the caller only asks whether it's ready (with no request to send it), use "report_status" instead.
 - "health_package": caller is asking about a health checkup/screening PACKAGE (a bundle of tests sold together, e.g. "Diabetes Screening Package"), either about ONE named package (e.g. "diabetes package koto", "ডায়াবেটিস প্যাকেজে কি কি টেস্ট আছে", "what's in the full body package") or asking what packages exist AT ALL with none named (e.g. "what health packages do you have", "কি কি হেলথ প্যাকেজ আছে", "health package ache kina"). Do NOT use this for a question about a single, standalone lab test's price/sample/duration -- those are "test_rate"/"test_sample"/"test_duration".
@@ -252,7 +267,14 @@ INTENTS (one per part -- see MULTI-PART below):
 - "billing_balance": caller is asking whether they have any OUTSTANDING BALANCE / DUES pending (e.g. "amar kono bill baki ache", "do I have any pending dues", "আমার কোনো বকেয়া টাকা আছে কি"). This is about MONEY OWED to the clinic, never a test's price -- a test-price question stays "test_rate" even if the caller uses a similar-sounding word for "how much".
 - "compare_options": caller names TWO tests or packages and asks how they differ or which costs more/less (e.g. "CBC r Full Body Package er modhye price diff koto", "which is cheaper, the diabetes package or a bare sugar test", "ei dutor modhye ki tests alada", "what's the difference between these two packages"). Requires BOTH names -- if the caller names only one, still classify this intent and fill whichever slot they gave; the missing one is asked for separately downstream, not by you. Do NOT use this for a question about a single named test/package's own price or contents -- that stays "test_rate"/"health_package". You are NEVER asked to say which option is medically better or to recommend one -- that judgment does not exist in this task at all; the actual price/component comparison is computed downstream, in code, from live data, never by you.
 - "request_callback": caller wants a HUMAN to call them back, rather than continuing to ask the clinic anything right now (e.g. "amake ektu callback korte bolben", "can someone call me back", "একটু কল ব্যাক করতে বলবেন", "please have someone ring me later", "abhi baat nahi kar sakta, baad mein call kariye"). Distinct from "book_appointment" (that is asking to schedule a VISIT to the clinic, not a phone call back) and from every "phone" collected elsewhere (a report/billing lookup's phone is an IDENTITY check, never a callback request). If the caller gives a time window (e.g. "this evening", "aj bikele", "সন্ধ্যার দিকে", "after 6pm") capture it in "callback_time_window" -- leave it null if none was given, it is asked for separately downstream. If the caller states WHY they want a callback (e.g. "amar report niye kotha bolte chai", "about my appointment"), copy that into "callback_reason" verbatim; leave it null if no reason was given -- do NOT invent one.
-- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm Bengali reply yourself for this case only.
+- "payment": caller is asking HOW to pay, whether payment is needed in advance, or what payment methods are accepted (e.g. "কীভাবে টাকা দেব", "पैसे कैसे देने हैं", "do I need to pay online"). Asking only the PRICE of a test is "test_rate", not this.
+- "report_collection": caller is asking when a report will be ready, or how to collect it (e.g. "রিপোর্ট কবে পাব", "रिपोर्ट कब मिलेगी", "how do I get my report"). Distinct from "report_status" above: "report_status" is asking whether it's ready NOW (a yes/no check), this is asking about the collection process/timing itself.
+- "patient_history": caller is asking about their OWN past tests or records (e.g. "আমার আগের টেস্টগুলো", "मेरी पिछली रिपोर्ट", "what tests have I had").
+- "my_bookings": caller is asking what appointments they ALREADY have booked, or when their
+  existing appointment is (e.g. "আমার কী কী বুকিং আছে", "আমার অ্যাপয়েন্টমেন্ট কবে",
+  "मेरी अपॉइंटमेंट कब है", "what have I booked"). Asking to MAKE a new booking is
+  "book_appointment", not this.
+- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself, IN THE CALLER'S OWN LANGUAGE, for this case only.
 - "out_of_scope": you understand EXACTLY what the caller is asking for, but it is not a kind of request any intent above covers at all -- not a lab test, doctor, appointment, report, insurance/billing question, health package, or clinic hours/address/directions question (e.g. asking to buy medicines, home sample pickup, an ambulance, speaking to the owner/manager about something unrelated to a lookup above, a general-knowledge question with nothing to do with the clinic, or any other request this list has no intent for). Do NOT use this just because a specific test/doctor/department NAME is unfamiliar to you -- that is still "test_rate"/"doctor_availability"/etc. with the name copied as given; the downstream lookup honestly reports if nothing matches. Reserve "out_of_scope" for a KIND of request no intent above covers, never for an unfamiliar named entity within a covered category.
 - "unclear": you genuinely cannot tell what the caller wants, or the utterance is empty/garbled ASR noise. Distinct from "out_of_scope" just above: if you understood the caller clearly and it simply is not something this assistant does, that is "out_of_scope", not "unclear" -- "unclear" is only for when you cannot tell what they meant at all.
 
@@ -264,21 +286,6 @@ SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
 - "date_expr": if the caller referred to a day or a period, name it using EXACTLY ONE of these values and nothing else: {date_expr_list}. NEVER output a calendar date -- not in this field, not anywhere. You have no way to know what today is, so any yyyy-mm-dd you produced would be invented. Examples: আজ -> "today", কাল/আগামীকাল -> "tomorrow", পরশু -> "day_after_tomorrow", আগামী সপ্তাহে -> "next_week", আগামী শনিবার -> "next_saturday", শনিবার -> "saturday". If the caller DID refer to a day but none of the values above fit it, use "other" -- never guess a value that is merely close. If the caller mentioned no day at all, leave it null -- do not assume "today".
 - "date": ONLY if the caller spoke a calendar date out loud ("১৫ তারিখ", "তেসরা সেপ্টেম্বর"), copy their words EXACTLY as they said them, the same way you copy a test name. Do not convert it to digits or to any date format. Otherwise null.
-=======
-- "payment": caller is asking HOW to pay, whether payment is needed in advance, or what payment methods are accepted (e.g. "কীভাবে টাকা দেব", "पैसे कैसे देने हैं", "do I need to pay online"). Asking only the PRICE of a test is "test_rate", not this.
-- "report_collection": caller is asking when a report will be ready, or how to collect it (e.g. "রিপোর্ট কবে পাব", "रिपोर्ट कब मिलेगी", "how do I get my report").
-- "patient_history": caller is asking about their OWN past tests or records (e.g. "আমার আগের টেস্টগুলো", "मेरी पिछली रिपोर्ट", "what tests have I had"). Asking when a report will be READY is "report_collection", not this.
-- "my_bookings": caller is asking what appointments they ALREADY have booked, or when their
-  existing appointment is (e.g. "আমার কী কী বুকিং আছে", "আমার অ্যাপয়েন্টমেন্ট কবে",
-  "मेरी अपॉइंटमेंट कब है", "what have I booked"). Asking to MAKE a new booking is
-  "book_appointment", not this.
-- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself, IN THE CALLER'S OWN LANGUAGE, for this case only.
-- "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
-
-SLOT RULES:
-- Only fill a slot if the caller's words support it. Leave it null rather than inferring.
-- "date": resolve relative time words in any of the three languages (আজ / आज / today = today, কাল / कल / tomorrow, পরশু / परसों / day after tomorrow, this/next weekday names) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
->>>>>>> dev_chakravardhan
 - "test_name" / "doctor_name": copy the term as the caller said it (Bengali or transliterated English), do not translate or normalize it -- the lookup service handles matching.
 - "department": copy the department name as the caller said it (e.g., "ortho", "cardiology", "অর্থোপেডিক্স"), do not translate or normalize it -- the lookup service handles matching.
 - "phone": only if a phone number is explicitly spoken, digits only.
@@ -301,11 +308,7 @@ MULTI-PART: a caller in a hurry may ask more than one distinct, independent ques
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{
-<<<<<<< HEAD
-  "intent": "test_rate" | "test_sample" | "test_duration" | "test_preparation" | "doctor_availability" | "doctor_schedule" | "doctors_by_department" | "book_appointment" | "report_status" | "report_send" | "health_package" | "clinic_info" | "walkin_eligibility" | "prescription_requirements" | "insurance_coverage" | "billing_balance" | "compare_options" | "request_callback" | "smalltalk" | "out_of_scope" | "unclear",
-=======
-  "intent": "test_rate" | "doctor_availability" | "doctors_by_department" | "book_appointment" | "payment" | "report_collection" | "patient_history" | "my_bookings" | "smalltalk" | "unclear",
->>>>>>> dev_chakravardhan
+  "intent": "test_rate" | "test_sample" | "test_duration" | "test_preparation" | "doctor_availability" | "doctor_schedule" | "doctors_by_department" | "book_appointment" | "report_status" | "report_send" | "health_package" | "clinic_info" | "walkin_eligibility" | "prescription_requirements" | "insurance_coverage" | "billing_balance" | "compare_options" | "request_callback" | "payment" | "report_collection" | "patient_history" | "my_bookings" | "smalltalk" | "out_of_scope" | "unclear",
   "slots": {{
     "test_name": string or null,
     "doctor_name": string or null,

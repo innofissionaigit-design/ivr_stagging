@@ -91,7 +91,6 @@ _WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(),
 
 # Kept deliberately small and exact-match only (see is_affirmative /
 # is_negative below) -- these gate whole-utterance decisions like "abandon
-<<<<<<< HEAD
 # the booking flow" and, since the booking-readback story, "confirm the
 # write", so a false hit on a substring inside an unrelated reply (e.g. a
 # patient name that happens to contain "না") would be a much worse failure
@@ -106,13 +105,22 @@ _WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(),
 # only recognised Bengali words, so an English "yes"/"no" or a
 # transliterated "haan"/"nahi" fell through to the unparseable-reply retry
 # path instead of being understood immediately.
+#
+# ADDED BY CHAKRAVARDHAN -- Hindi (Devanagari) vocabulary, same reasoning:
+# a caller can answer in Hindi regardless of which language the agent
+# spoke the prompt in, so this gate cannot be Bengali/English/Hinglish-only
+# either.
 _AFFIRMATIVE = {
     # Bengali
     "হ্যাঁ", "হ্যা", "হুম", "হুঁ", "ঠিক", "ঠিক আছে", "ওই দিন", "ওইদিন",
     "সেদিন", "সেদিনই", "সেই দিন", "চলবে", "ওকে", "হবে",
+    # Hindi
+    "हाँ", "हां", "जी", "जी हाँ", "ठीक", "ठीक है", "हूँ", "उसी दिन",
+    "वही दिन", "चलेगा", "ओके",
     # English
     "yes", "yeah", "yep", "yup", "correct", "right", "that's right",
-    "ok", "okay", "sure", "confirmed", "confirm",
+    "ok", "okay", "sure", "confirmed", "confirm", "that day",
+    "that works", "fine", "alright",
     # Hinglish / Banglish (Latin-script transliteration -- shared
     # vocabulary between the two, since both are "regional language +
     # English" code-switches)
@@ -123,33 +131,15 @@ _NEGATIVE = {
     # Bengali
     "না", "নাহ", "না না", "লাগবে না", "থাক", "দরকার নেই", "ইচ্ছা নেই",
     "না থাক", "লাগবে নাহ",
+    # Hindi
+    "नहीं", "ना", "नही", "नहीं चाहिए", "रहने दीजिए", "रहने दो",
+    "ज़रूरत नहीं", "जरूरत नहीं",
     # English
     "no", "nope", "not correct", "wrong", "incorrect", "not right",
+    "not now", "no thanks", "no thank you", "leave it", "don't", "dont",
     # Hinglish / Banglish
     "nahi", "nahin", "na", "galat", "thik na", "thik nei",
 }
-=======
-# the booking flow", so a false hit on a substring inside an unrelated
-# reply (e.g. a patient name that happens to contain "না") would be a much
-# worse failure than occasionally not recognising a yes/no.
-_AFFIRMATIVE = {"হ্যাঁ", "হ্যা", "হুম", "হুঁ", "ঠিক", "ঠিক আছে", "ওই দিন", "ওইদিন",
-                "সেদিন", "সেদিনই", "সেই দিন", "চলবে", "ওকে", "হবে",
-                # Hindi
-                "हाँ", "हां", "जी", "जी हाँ", "ठीक", "ठीक है", "हूँ", "उसी दिन",
-                "वही दिन", "चलेगा", "ओके",
-                # English -- exact whole-utterance match, so short forms are
-                # safe here in a way they would not be in a substring table.
-                "yes", "yeah", "yep", "ok", "okay", "sure", "that day",
-                "that works", "fine", "alright"}
-_NEGATIVE = {"না", "নাহ", "না না", "লাগবে না", "থাক", "দরকার নেই", "ইচ্ছা নেই",
-             "না থাক", "লাগবে নাহ",
-             # Hindi
-             "नहीं", "ना", "नही", "नहीं चाहिए", "रहने दीजिए", "रहने दो",
-             "ज़रूरत नहीं", "जरूरत नहीं",
-             # English
-             "no", "nope", "not now", "no thanks", "no thank you",
-             "leave it", "don't", "dont"}
->>>>>>> dev_chakravardhan
 
 
 def _strip(text: str) -> str:
@@ -228,6 +218,26 @@ def _bn_bounded(word: str, text: str) -> bool:
     return re.search(rf"(?<!{_BN_CHAR}){re.escape(word)}(?!{_BN_CHAR})", text) is not None
 
 
+def _bounded(word: str, text: str) -> bool:
+    """Is `word`/phrase present in `text` as a whole word or phrase,
+    regardless of which script it's written in?
+
+    Bengali combining vowel signs and the nukta are not classified as `\\w`
+    by Python's re engine, so a plain `\\b` boundary matches in the middle
+    of a word for Bengali script specifically -- see _bn_bounded() above,
+    which is the fix for that ("সকাল" contains "কাল" as a substring, and a
+    caller saying "সকালে" was silently given tomorrow's date). Hindi
+    (Devanagari) and English letters do not have that problem, so a plain
+    regex `\\b` is correct for them -- and necessary, since ADDED BY
+    CHAKRAVARDHAN's Hindi/English entries in _RELATIVE_DAYS and
+    _WEEKDAYS_BN are matched with a bare substring test with no boundary
+    check at all otherwise.
+    """
+    if re.search(_BN_CHAR, word):
+        return _bn_bounded(word, text)
+    return re.search(rf"\b{re.escape(word)}\b", text) is not None
+
+
 def parse_date(text: str, today: datetime.date | None = None,
                 offered_date: str | None = None) -> str | None:
     """-> ISO date string, or None if not confident.
@@ -242,7 +252,6 @@ def parse_date(text: str, today: datetime.date | None = None,
     if offered_date and is_affirmative(t):
         return offered_date
 
-<<<<<<< HEAD
     # story title: The model never originates a fact
     # user story: As a clinical lead, I want every price, date and identifier
     #   to come from a verified system response, so that a wrong answer is a
@@ -264,35 +273,28 @@ def parse_date(text: str, today: datetime.date | None = None,
     # model's own interpretation -- so a parser that invents a date is the
     # same defect as a model that invents one, only harder to notice.
     #
-    # _bn_bounded() is the fix, and it is the same fix parse_time() already
-    # documents for টা/টার/টায়: \b cannot be used here because Bengali vowel
-    # signs and the nukta are combining marks that Python's \w does not count
-    # as word characters, so \b matches in the middle of a word. Asserting
-    # "no Bengali character adjacent" instead does what \b was meant to do.
+    # _bounded() is the fix (Bengali-aware via _bn_bounded(), plain \b for
+    # Hindi/English -- see its own docstring): \b alone cannot be used for
+    # Bengali because Bengali vowel signs and the nukta are combining marks
+    # that Python's \w does not count as word characters, so \b matches in
+    # the middle of a word there.
     #
-    # Longest key first so a shorter key can never consume part of a longer
-    # one -- "কাল" must not fire inside "আগামীকাল".
-    for word in sorted(_RELATIVE_DAYS, key=len, reverse=True):
-        if _bn_bounded(word, t):
-            return (today + datetime.timedelta(days=_RELATIVE_DAYS[word])).isoformat()
-
-    for word in sorted(_WEEKDAYS_BN, key=len, reverse=True):
-        if _bn_bounded(word, t):
-            days_ahead = (_WEEKDAYS_BN[word] - today.weekday()) % 7
-=======
-    # LONGEST PHRASE FIRST. These are substring matches, and several
-    # entries contain shorter ones: "day after tomorrow" contains
-    # "tomorrow", "আগামীকাল" contains "কাল". Iterating in table order made
-    # "day after tomorrow" resolve to tomorrow -- a caller booked a day
-    # early, with nothing in the transcript to show why.
+    # ADDED BY CHAKRAVARDHAN -- LONGEST PHRASE FIRST, via the precomputed
+    # _RELATIVE_DAYS_BY_LENGTH / _WEEKDAYS_BY_LENGTH tuples: several entries
+    # contain shorter ones -- "day after tomorrow" contains "tomorrow",
+    # "আগামীকাল" contains "কাল" -- and iterating in table order let a
+    # shorter key fire first ("day after tomorrow" resolving to tomorrow, a
+    # caller booked a day early with nothing in the transcript to show why).
+    # This subsumes the plain `sorted(..., key=len, reverse=True)` the
+    # boundary-checking fix above used to do inline, since these tuples are
+    # already sorted longest-first once at import.
     for word, offset in _RELATIVE_DAYS_BY_LENGTH:
-        if word in t:
+        if _bounded(word, t):
             return (today + datetime.timedelta(days=offset)).isoformat()
 
     for word, weekday in _WEEKDAYS_BY_LENGTH:
-        if word in t:
+        if _bounded(word, t):
             days_ahead = (weekday - today.weekday()) % 7
->>>>>>> dev_chakravardhan
             days_ahead = days_ahead or 7  # naming today's weekday means NEXT week's
             return (today + datetime.timedelta(days=days_ahead)).isoformat()
 
@@ -464,7 +466,6 @@ _DIGIT_WORD_RE = re.compile(r"\b(" + "|".join(_DIGIT_WORDS) + r")\b", re.IGNOREC
 
 def parse_phone(text: str) -> str | None:
     """-> a 10-digit phone number, or None if the utterance doesn't
-<<<<<<< HEAD
     contain enough digits to be one.
 
     UPDATED BY SOURAV -- fixes a real production bug, reported directly
@@ -508,16 +509,19 @@ def parse_phone(text: str) -> str | None:
     docstring: "return None whenever not confident, and let main.py
     re-prompt... rather than guess"). Flagged in this story's test report,
     not silently absorbed.
+
+    ADDED BY CHAKRAVARDHAN -- translates via `_DIGITS` (Bengali AND
+    Devanagari numerals, per agent/language.py's digit_translation()),
+    not the narrower `_BN_DIGITS` (Bengali only) this used before -- a
+    Hindi ASR checkpoint emitting ०१२३... digits would otherwise fall
+    straight through the same \\D strip this docstring already describes
+    for spoken word digits, one digit short.
     """
-    translated = text.translate(_BN_DIGITS)
+    translated = text.translate(_DIGITS)
     words_resolved = _DIGIT_WORD_RE.sub(
         lambda m: _DIGIT_WORDS[m.group(1).lower()], translated,
     )
     digits = re.sub(r"\D", "", words_resolved)
-=======
-    contain enough digits to be one."""
-    digits = re.sub(r"\D", "", text.translate(_DIGITS))
->>>>>>> dev_chakravardhan
     if len(digits) < 10:
         return None
     return digits[-10:]  # tolerate a spoken +91 / leading 0 trunk prefix
