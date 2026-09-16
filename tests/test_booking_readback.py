@@ -75,6 +75,8 @@ FULL = {"doctor_name": "Dr. A Sen", "doctor_name_bn": "সেন",
 class _Session:
     call_id = "rb01"
     utt_seq = 1
+    history_token = None
+    timeline = None
 
     def __init__(self, awaiting="confirm_booking", slots=None):
         self.call_state = main.call_state_mod.build()
@@ -93,7 +95,7 @@ def wired(monkeypatch):
     is observable without one ever happening."""
     written: list[dict] = []
 
-    async def _finish(session, slots, *, confirmed=False):
+    async def _finish(session, slots, *, confirmed=False, language=None):
         written.append({"slots": dict(slots), "confirmed": confirmed})
         session.pending = None
 

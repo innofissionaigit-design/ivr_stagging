@@ -4542,10 +4542,22 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         try:
             if intent == "test_rate":
                 if not slots.get("test_name"):
-                    await _speak(session, missing_slot_prompt(intent, "test_name", language=language))
+                    await _speak_fact(
+                        session,
+                        intent,
+                        slots,
+                        results,
+                        test_rate_reply(slots, result, language=language),
+                    )
                     return
                 result = await _tools.get_test_rate(slots["test_name"])
-                await _speak(session, test_rate_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    test_rate_reply(slots, result, language=language),
+                )
                 _remember_primary_entity(session, intent, slots, result)
 
             elif intent == "test_sample":
@@ -4759,7 +4771,13 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
 
             elif intent == "doctor_availability":
                 if not slots.get("doctor_name"):
-                    await _speak(session, missing_slot_prompt(intent, "doctor_name", language=language))
+                    await _speak_fact(
+                        session,
+                        intent,
+                        slots,
+                        results,
+                        doctor_availability_reply(slots, result, language=language),
+                    )
                     return
                 # Default to TODAY, not "whenever next available": a bare
                 # "ডাক্তার সেন আছেন?" with no date mentioned is a caller
@@ -4771,7 +4789,13 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # instead of "not today, but they're on Tuesdays" etc.
                 date_iso = slots.get("date") or datetime.date.today().isoformat()
                 result = await _tools.get_doctor_availability(slots["doctor_name"], date_iso)
-                await _speak(session, doctor_availability_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    doctor_availability_reply(slots, result, language=language),
+                )
                 _remember_primary_entity(session, intent, slots, result)
 
                 # Keep the flow open for "yes, book that day" / "another
@@ -4809,11 +4833,21 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # it would mean touching doctor_availability's identical
                 # gap too, which is out of this story's scope.
                 if not slots.get("doctor_name"):
-                    await _speak(session, missing_slot_prompt(intent, "doctor_name", language=language))
+                    await _speak(
+                        session,
+                        missing_slot_prompt(intent, "doctor_name", language=language),
+                    )
                     return
+                
                 result = await _tools.get_doctor_schedule(slots["doctor_name"])
-                await _speak(session, doctor_schedule_reply(slots, result, language=language))
+
+                await _speak(
+                    session,
+                    doctor_schedule_reply(slots, result, language=language),
+                )
+
                 _remember_primary_entity(session, intent, slots, result)
+
 
             elif intent == "doctors_by_department":
                 if not slots.get("department"):
@@ -4828,7 +4862,13 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # bypasses this (used as-is below).
                 date_iso = slots.get("date") or datetime.date.today().isoformat()
                 result = await _tools.get_doctors_by_department(slots["department"], date_iso)
-                await _speak(session, doctors_by_department_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    doctors_by_department_reply(slots, result, language=language),
+                )
 
                 # Continue straight into booking: offer the doctors just
                 # listed as candidates, so the caller's very next utterance

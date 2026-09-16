@@ -37,6 +37,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent import audio_quality as aq  # noqa: E402
+from agent import call_state as call_state_mod  # noqa: E402
 from agent import language as lang_mod  # noqa: E402
 from agent.quality_metrics import (  # noqa: E402
     ACTION_CLARIFY, ACTION_KEYPAD, QualityMetrics, TurnFailureTracker,
@@ -627,6 +628,10 @@ class FakeSession:
         # _dispatch_turn now asks the session which language to answer in
         # (agent/language.py). The default is what a real CallSession gets.
         self.lang = lang_mod.default_lang()
+
+        self.utt_seq = 0
+        self.call_state = call_state_mod.build()
+        self.deferred = None
 
         # Speakerphone support: _dispatch_turn asks every turn which path
         # bucket to file the result under, and whether a barge-in left a

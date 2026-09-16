@@ -4327,11 +4327,18 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     session.call_id,
                     "n/a" if _agree is None else f"{_agree:.2f}",
                     asr_result.decoder_used,
-                    asr_result.ctc_words, asr_result.rnnt_words, turn_zone)
+                    getattr(asr_result, "ctc_words", 0),
+                    getattr(asr_result, "rnnt_words", 0),
+                    turn_zone)
         # Structured export for the correlation study. Signal and join key
         # only -- never the transcript. See agent/turn_log.py.
-        turn_log.record(session.call_id, session.utt_seq, asr_result, turn_zone,
-                        call_state=session.call_state)
+        turn_log.record(
+            session.call_id,
+            getattr(session, "utt_seq", 0),
+            asr_result,
+            turn_zone,
+            call_state=getattr(session, "call_state", None),
+        )
 
         if turn_zone == confidence.REJECT:
             # Both decoders produced text and disagreed about nearly all of it.
