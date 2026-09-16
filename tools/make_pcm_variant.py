@@ -9,8 +9,18 @@ The split is enforced, not merely intended: everything from
 `_resolve_intent` downward must be byte-identical between the two files,
 and this script refuses to write if that stops being true.
 
+FIXED (merge dev_chakravardhan -> staging_merged, gate's `build` check --
+"main_pcm.py differs from tools/make_pcm_variant.py output"): the
+transport-patch string constants below (HELLO_NEW, the TAIL_READ_IS_CHEAP
+replacement) used hand-wrapped line breaks that didn't match
+scripts/gate-ruff.toml's format rules, so `ruff format main_pcm.py` and
+`python tools/make_pcm_variant.py` disagreed with each other no matter
+which ran last. Reworded to already be in ruff-format's preferred shape,
+so generating and formatting main_pcm.py now produce the same file.
+
     python tools/make_pcm_variant.py
 """
+
 from __future__ import annotations
 
 import io
@@ -57,7 +67,7 @@ CALLSESSION_DOC = '''class CallSession:
 
 '''
 
-SLICE_NEW = '''    sr = session.audio.sample_rate
+SLICE_NEW = """    sr = session.audio.sample_rate
     clip = session.audio.slice_tensor(start_s, end_s + UTTERANCE_PAD_S)
     clip_path = os.path.join(session.tmpdir, f"utt{seq}.wav")
 
@@ -73,9 +83,9 @@ SLICE_NEW = '''    sr = session.audio.sample_rate
         torchaudio.save(clip_path, wav, out_sr)
 
     await asyncio.to_thread(_write)
-    return clip_path'''
+    return clip_path"""
 
-HELLO_NEW = '''    if msg.get("type") == "playback_done":
+HELLO_NEW = """    if msg.get("type") == "playback_done":
         session.release_gate()
     elif msg.get("type") == "hello":
         # The browser may refuse the 16kHz AudioContext we ask for. Trust
@@ -86,12 +96,15 @@ HELLO_NEW = '''    if msg.get("type") == "playback_done":
         session.declared_rate = rate
         session.audio.sample_rate = rate
         if rate != SAMPLE_RATE:
-            logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
-                           session.call_id, rate, SAMPLE_RATE)
-        logger.info("[%s] transport: %s @ %dHz", session.call_id,
-                    msg.get("format", "pcm_s16le"), rate)'''
+            logger.warning(
+                "[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
+                session.call_id,
+                rate,
+                SAMPLE_RATE,
+            )
+        logger.info("[%s] transport: %s @ %dHz", session.call_id, msg.get("format", "pcm_s16le"), rate)"""
 
-MIC_TAIL_NEW = '''    sr = session.audio.sample_rate
+MIC_TAIL_NEW = """    sr = session.audio.sample_rate
     n = int(seconds * sr)
     total = len(session.audio)
     if total < n:
@@ -99,15 +112,15 @@ MIC_TAIL_NEW = '''    sr = session.audio.sample_rate
     tail = session.audio.tail_tensor((total - n) / sr)
     if tail.numel() == 0:
         return None
-    return tail.numpy(), sr'''
+    return tail.numpy(), sr"""
 
 
-POLL_NEW = '''        sr = session.audio.sample_rate
+POLL_NEW = """        sr = session.audio.sample_rate
         tail = session.audio.tail_tensor(session.processed_until_s)
         if tail.numel() < int(0.2 * sr):
             continue  # not enough new audio to judge yet -- not an error
 
-        result'''
+        result"""
 
 
 def main() -> None:
@@ -120,48 +133,62 @@ def main() -> None:
             sys.exit(f"PATCH MISS ({label}) -- main.py changed shape; update this script")
         s = s.replace(old, new, 1)
 
-    rep('"""Kolkata Care Diagnostics -- Bengali voice agent, WebSocket orchestrator.',
-        HEADER, "docstring")
-    rep("import torchaudio\nfrom fastapi",
+    rep('"""Kolkata Care Diagnostics -- Bengali voice agent, WebSocket orchestrator.', HEADER, "docstring")
+    rep(
+        "import torchaudio\nfrom fastapi",
         "import torchaudio\nfrom agent.pcm_buffer import PcmCallBuffer, SAMPLE_RATE\nfrom fastapi",
-        "imports")
+        "imports",
+    )
 
-    rep(s[s.index("async def _decode_to_wav("):s.index("class CallSession:")], "", "drop decoder")
-    rep(s[s.index("class CallSession:"):s.index("    def __init__(self, ws: WebSocket):")],
-        CALLSESSION_DOC, "CallSession docstring")
+    rep(s[s.index("async def _decode_to_wav(") : s.index("class CallSession:")], "", "drop decoder")
+    rep(
+        s[s.index("class CallSession:") : s.index("    def __init__(self, ws: WebSocket):")],
+        CALLSESSION_DOC,
+        "CallSession docstring",
+    )
 
-    rep('        self.raw_path = os.path.join(self.tmpdir, "call.webm")\n'
+    rep(
+        '        self.raw_path = os.path.join(self.tmpdir, "call.webm")\n'
         '        self.wav_path = self.raw_path + ".wav"\n'
         '        open(self.raw_path, "wb").close()',
         "        self.audio = PcmCallBuffer()\n        self.declared_rate: int | None = None",
-        "buffer")
+        "buffer",
+    )
 
-    rep("    async def append(self, chunk: bytes):\n"
+    rep(
+        "    async def append(self, chunk: bytes):\n"
         "        self.last_activity = time.time()\n"
         '        with open(self.raw_path, "ab") as f:\n'
         "            f.write(chunk)",
         "    async def append(self, chunk: bytes):\n"
         "        self.last_activity = time.time()\n"
         "        self.audio.append(chunk)",
-        "append")
+        "append",
+    )
 
-    rep("    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
+    rep(
+        "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
         "    a = max(0, int(start_s * sr))\n"
         "    b = min(int((end_s + UTTERANCE_PAD_S) * sr), wav.shape[-1])\n"
         '    clip_path = f"{session.wav_path}.utt{seq}.wav"\n'
         "    await asyncio.to_thread(torchaudio.save, clip_path, wav[:, a:b], sr)\n"
         "    return clip_path",
-        SLICE_NEW, "slice")
+        SLICE_NEW,
+        "slice",
+    )
 
-    rep("    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+    rep(
+        "    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
         "        return False\n"
         "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
         "    buffer_end_s = wav.shape[-1] / sr\n"
         "    session.processed_until_s",
         "    buffer_end_s = session.audio.duration_s\n    session.processed_until_s",
-        "resync")
+        "resync",
+    )
 
-    rep("        if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+    rep(
+        "        if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
         "            continue  # too little data yet to form a valid container -- not an error\n"
         "\n"
         "        wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
@@ -171,9 +198,12 @@ def main() -> None:
         "        tail = wav[tail_start_sample:]\n"
         "\n"
         "        result",
-        POLL_NEW, "poll")
+        POLL_NEW,
+        "poll",
+    )
 
-    rep("    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+    rep(
+        "    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
         "        return None\n"
         "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
         "    wav = wav.mean(dim=0) if wav.shape[0] > 1 else wav.squeeze(0)\n"
@@ -181,24 +211,29 @@ def main() -> None:
         "    if wav.shape[-1] < n:\n"
         "        return None\n"
         "    return wav[-n:].numpy(), sr",
-        MIC_TAIL_NEW, "mic tail")
+        MIC_TAIL_NEW,
+        "mic tail",
+    )
 
-    rep('    if msg.get("type") == "playback_done":\n        session.release_gate()',
-        HELLO_NEW, "hello")
+    rep('    if msg.get("type") == "playback_done":\n        session.release_gate()', HELLO_NEW, "hello")
 
-    rep("TAIL_READ_IS_CHEAP = False",
-        "TAIL_READ_IS_CHEAP = True   # raw PCM: reading the tail is a slice, not a decode",
-        "tail cost")
+    rep(
+        "TAIL_READ_IS_CHEAP = False",
+        "TAIL_READ_IS_CHEAP = True  # raw PCM: reading the tail is a slice, not a decode",
+        "tail cost",
+    )
 
     rep('AUDIT_TRANSPORT = "webm"', 'AUDIT_TRANSPORT = "pcm"', "audit transport")
 
-    rep('app.mount("/", StaticFiles(directory="static", html=True), name="static")',
+    rep(
+        'app.mount("/", StaticFiles(directory="static", html=True), name="static")',
         'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
-        "mount")
+        "mount",
+    )
 
     # The point of the split: prove the reasoning half was untouched.
     a, b = "async def _resolve_intent(", "async def _resync_after_playback("
-    if src[src.index(a):src.index(b)] != s[s.index(a):s.index(b)]:
+    if src[src.index(a) : src.index(b)] != s[s.index(a) : s.index(b)]:
         sys.exit("REFUSING TO WRITE: reasoning half diverged between main.py and the variant")
 
     io.open("main_pcm.py", "w", encoding="utf-8").write(s)

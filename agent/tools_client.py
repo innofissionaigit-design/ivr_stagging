@@ -11,6 +11,7 @@ failure (timeout, connection refused, 5xx), which main.py maps to a
 distinct "I couldn't check that right now" reply instead of a false
 "not found".
 """
+
 from __future__ import annotations
 
 import functools
@@ -107,6 +108,24 @@ class ToolCallError(Exception):
     not-found/unavailable result, which is not an error."""
 
 
+def _mask_phone(phone: str | None) -> str:
+    """Last-4-digit mask for a phone number landing in a ToolCallError's
+    text.
+
+    FIXED -- the gate's phi-in-logs check flags a caller's raw phone number
+    reaching any string that ends up in a log line, the same way it flags a
+    secret. ToolCallError's message IS logged verbatim on tool failure (see
+    verify_report_otp's own comment below on why `otp_code` is excluded for
+    the identical reason). Mirrors clinic-api/main.py's own
+    `_mask_phone_last4` / "masked_phone" convention ("...1234") so a
+    failure log and a normal API response redact the same way.
+    """
+    if not phone:
+        return repr(phone)
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return f"...{digits[-4:]}" if len(digits) >= 4 else "...(short)"
+
+
 # ===========================================================================
 # EVERY CALL LEAVES A COMPLETE RECORD -- Author: Chakravardhan
 # ===========================================================================
@@ -127,6 +146,7 @@ def _audited(action: str, *, redact: tuple[str, ...] = (), summarize=None):
     response that carries something that must not be kept. Outside a call
     (startup's catalogue load, most unit tests) this is a pass-through.
     """
+
     def deco(fn):
         sig = inspect.signature(fn)
 
@@ -138,13 +158,17 @@ def _audited(action: str, *, redact: tuple[str, ...] = (), summarize=None):
             try:
                 bound = sig.bind(self, *args, **kwargs)
                 bound.apply_defaults()
-                request = {k: (call_audit.REDACTED if k in redact else v)
-                           for k, v in bound.arguments.items() if k != "self"}
+                request = {
+                    k: (call_audit.REDACTED if k in redact else v)
+                    for k, v in bound.arguments.items()
+                    if k != "self"
+                }
             except TypeError:
                 request = {}
-            return await audit.api_call(action, request,
-                                        lambda: fn(self, *args, **kwargs), summarize)
+            return await audit.api_call(action, request, lambda: fn(self, *args, **kwargs), summarize)
+
         return wrapper
+
     return deco
 
 
@@ -169,9 +193,12 @@ def _history_summary(result):
     verification", and that is fully answered without the contents."""
     if not isinstance(result, dict):
         return result
-    out = {"found": result.get("found"), "reason": result.get("reason"),
-           "tests": len(result.get("tests") or []),
-           "appointments": len(result.get("appointments") or [])}
+    out = {
+        "found": result.get("found"),
+        "reason": result.get("reason"),
+        "tests": len(result.get("tests") or []),
+        "appointments": len(result.get("appointments") or []),
+    }
     # The single timeline is counted, never copied -- the same rule, for the
     # same reason. Only when present, so an older response summarises as before.
     for key in ("timeline", "upcoming_appointments"):
@@ -186,11 +213,14 @@ class ClinicToolsClient:
     # listed in agent/reference_data_cache.py's docstring -- appointment
     # availability, billing, report status and every write stay live on
     # every call, unconditionally, exactly as before this change.
-    def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S,
-                 cache_ttl_s: float = DEFAULT_TTL_S):
+    def __init__(
+        self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S, cache_ttl_s: float = DEFAULT_TTL_S
+    ):
         self.base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
-            base_url=self.base_url, timeout=timeout_s, limits=DEFAULT_LIMITS,
+            base_url=self.base_url,
+            timeout=timeout_s,
+            limits=DEFAULT_LIMITS,
         )
         self.outcomes = tool_outcome.OutcomeCounter()
         self._ref_cache = TTLCache(ttl_s=cache_ttl_s)
@@ -357,13 +387,17 @@ class ClinicToolsClient:
     # "skipped" or "failed" means it must not, because the caller would
     # then hang up waiting for an SMS that is never coming.
     @_audited("book_appointment")
-    async def book_appointment(self, doctor_name: str, date: str, time_slot: str,
-                                patient_name: str, phone: str) -> dict:
+    async def book_appointment(
+        self, doctor_name: str, date: str, time_slot: str, patient_name: str, phone: str
+    ) -> dict:
         # ADDED BY SOURAV -- reference-data cache: deliberately EXCLUDED.
         # A write, not a fetch -- never a cache candidate.
         body = {
-            "doctor_name": doctor_name, "date": date, "time_slot": time_slot,
-            "patient_name": patient_name, "phone": phone,
+            "doctor_name": doctor_name,
+            "date": date,
+            "time_slot": time_slot,
+            "patient_name": patient_name,
+            "phone": phone,
         }
         try:
             r = await self._client.post("/api/v1/appointments", json=body)
@@ -411,17 +445,14 @@ class ClinicToolsClient:
     # endpoint's docstring. A caller who kept the first message still holds
     # a valid reference.
     @_audited("reschedule_appointment")
-    async def reschedule_appointment(self, confirmation_id: str, date: str,
-                                      time_slot: str) -> dict:
+    async def reschedule_appointment(self, confirmation_id: str, date: str, time_slot: str) -> dict:
         body = {"date": date, "time_slot": time_slot}
         try:
-            r = await self._client.post(
-                f"/api/v1/appointments/{confirmation_id}/reschedule", json=body)
+            r = await self._client.post(f"/api/v1/appointments/{confirmation_id}/reschedule", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
-            raise ToolCallError(
-                f"reschedule_appointment({confirmation_id!r}, {body!r}): {e}") from e
+            raise ToolCallError(f"reschedule_appointment({confirmation_id!r}, {body!r}): {e}") from e
 
     # ---- POST /api/v1/appointments/{confirmation_id}/cancel ----
     # Body: {"reason": "..." | null}   -- audit only, never sent to the patient
@@ -437,11 +468,11 @@ class ClinicToolsClient:
     # ringing twice) and none of them is a reason to message somebody about
     # a cancellation they were already told about.
     @_audited("cancel_appointment")
-    async def cancel_appointment(self, confirmation_id: str,
-                                  reason: str | None = None) -> dict:
+    async def cancel_appointment(self, confirmation_id: str, reason: str | None = None) -> dict:
         try:
             r = await self._client.post(
-                f"/api/v1/appointments/{confirmation_id}/cancel", json={"reason": reason})
+                f"/api/v1/appointments/{confirmation_id}/cancel", json={"reason": reason}
+            )
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
@@ -488,8 +519,7 @@ class ClinicToolsClient:
     # of the error message below; the token for the reason given in
     # _without_token.
     @_audited("verify_caller", redact=("answer",), summarize=_without_token)
-    async def verify_caller(self, phone: str, factor: str, answer: str,
-                             call_id: str | None = None) -> dict:
+    async def verify_caller(self, phone: str, factor: str, answer: str, call_id: str | None = None) -> dict:
         body = {"phone": phone, "factor": factor, "answer": answer, "call_id": call_id}
         try:
             r = await self._client.post("/api/v1/history/verify", json=body)
@@ -513,8 +543,7 @@ class ClinicToolsClient:
     @_audited("read_history", redact=("token",), summarize=_history_summary)
     async def read_history(self, token: str, call_id: str | None = None) -> dict:
         try:
-            r = await self._client.post("/api/v1/history/read",
-                                        json={"token": token, "call_id": call_id})
+            r = await self._client.post("/api/v1/history/read", json={"token": token, "call_id": call_id})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError as e:
@@ -524,8 +553,7 @@ class ClinicToolsClient:
     # Records a disclosure the AGENT refused (speakerphone, unclassified
     # audio path). Never raises into the turn loop: failing to write an audit
     # row must not turn into the caller hearing an error.
-    async def record_disclosure_refusal(self, phone: str, reason: str,
-                                         call_id: str | None = None) -> None:
+    async def record_disclosure_refusal(self, phone: str, reason: str, call_id: str | None = None) -> None:
         try:
             await self._post_disclosure_refusal(phone, reason, call_id)
         except ToolCallError:
@@ -535,12 +563,11 @@ class ClinicToolsClient:
     # the try/except inside it, a refusal that never reached clinic-api
     # would be recorded as a success -- the one thing the audit must not do.
     @_audited("record_disclosure_refusal")
-    async def _post_disclosure_refusal(self, phone: str, reason: str,
-                                       call_id: str | None) -> None:
+    async def _post_disclosure_refusal(self, phone: str, reason: str, call_id: str | None) -> None:
         try:
             r = await self._client.post(
-                "/api/v1/history/refusal",
-                json={"phone": phone, "reason": reason, "call_id": call_id})
+                "/api/v1/history/refusal", json={"phone": phone, "reason": reason, "call_id": call_id}
+            )
             r.raise_for_status()
         except httpx.HTTPError as e:
             raise ToolCallError(f"record_disclosure_refusal(reason={reason!r}): {e}") from e
@@ -574,7 +601,9 @@ class ClinicToolsClient:
         try:
             r = await self._client.get("/api/v1/doctors/by-department", params=params)
             r.raise_for_status()
-            data = self._answered("doctors_by_department", _validate("doctors_by_department", _parse_exact(r)))
+            data = self._answered(
+                "doctors_by_department", _validate("doctors_by_department", _parse_exact(r))
+            )
         except httpx.HTTPError as e:
             self._unreachable("doctors_by_department")
             raise ToolCallError(f"get_doctors_by_department({department!r}, {date!r}): {e}") from e
@@ -634,7 +663,7 @@ class ClinicToolsClient:
             r.raise_for_status()
             return _parse_exact(r)
         except httpx.HTTPError as e:
-            raise ToolCallError(f"get_report_status({phone!r}, {test_name!r}): {e}") from e
+            raise ToolCallError(f"get_report_status({_mask_phone(phone)}, {test_name!r}): {e}") from e
 
     # ---- Tool 6: POST /api/v1/reports/delivery/request ----
     # Body: {"phone", "report_number"}
@@ -652,7 +681,8 @@ class ClinicToolsClient:
             r.raise_for_status()
             return _parse_exact(r)
         except httpx.HTTPError as e:
-            raise ToolCallError(f"request_report_delivery({body!r}): {e}") from e
+            redacted_body = {**body, "phone": _mask_phone(phone)}
+            raise ToolCallError(f"request_report_delivery({redacted_body!r}): {e}") from e
 
     # ---- Tool 7: POST /api/v1/reports/otp/verify ----
     # Body: {"phone", "report_number", "otp_code"}
@@ -684,7 +714,7 @@ class ClinicToolsClient:
             # this exception's text is exactly what logger.error() below
             # (main_pcm.py / main.py) writes to the log on a tool failure.
             raise ToolCallError(
-                f"verify_report_otp(phone={phone!r}, report_number={report_number!r}): {e}"
+                f"verify_report_otp(phone={_mask_phone(phone)}, report_number={report_number!r}): {e}"
             ) from e
 
     # =========================================================================
@@ -913,7 +943,7 @@ class ClinicToolsClient:
             r.raise_for_status()
             return _parse_exact(r)
         except httpx.HTTPError as e:
-            raise ToolCallError(f"get_patient_billing({phone!r}): {e}") from e
+            raise ToolCallError(f"get_patient_billing({_mask_phone(phone)}): {e}") from e
 
     # =========================================================================
     # ADDED BY SOURAV -- "Caller asks to be called back" story.
@@ -933,4 +963,5 @@ class ClinicToolsClient:
             r.raise_for_status()
             return _parse_exact(r)
         except httpx.HTTPError as e:
-            raise ToolCallError(f"request_callback({body!r}): {e}") from e
+            redacted_body = {**body, "phone": _mask_phone(phone)}
+            raise ToolCallError(f"request_callback({redacted_body!r}): {e}") from e

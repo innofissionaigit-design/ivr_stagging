@@ -34,6 +34,7 @@ where a pattern-matcher's failure mode is silent and wrong. The fast path
 handles the questions with one entity and no PII, and hands over anything
 else. Abstaining is a first-class result here, not a failure.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -125,8 +126,7 @@ _AMBIGUOUS_RATE_CUES = ("কত পড়বে", "কত লাগবে", "ক
 # unambiguous _RATE_CUES hit -- "রিপোর্ট এর জন্য কত টাকা লাগবে" still
 # resolves as test_rate, since "কত টাকা" is unambiguous on its own.
 _DURATION_SIGNAL_CUES = ("রিপোর্ট", "ফলাফল", "রেজাল্ট")
-_AVAIL_CUES = ("কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন",
-               "পাওয়া যাবে", "ভিজিট")
+_AVAIL_CUES = ("কখন", "বসবেন", "বসেন", "চেম্বার", "আছেন", "থাকবেন", "পাওয়া যাবে", "ভিজিট")
 # ADDED BY SOURAV -- "Caller asks when a doctor sits" story. "কবে" (when/
 # which day), "সময়সূচি" and "শিডিউল" (schedule) used to live in
 # _AVAIL_CUES above, which meant "ডাক্তার সেন কবে বসেন" ("when/which days
@@ -144,8 +144,7 @@ _AVAIL_CUES = ("কখন", "বসবেন", "বসেন", "চেম্ব�
 # report), so the safe move is to defer to the LLM, which DOES now know
 # the difference, rather than silently keep guessing the wrong intent.
 _SCHEDULE_CUES = ("কবে", "সময়সূচি", "শিডিউল")
-_BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল",
-              "নাম লেখা", "স্লট")
+_BOOK_CUES = ("বুক", "বুকিং", "অ্যাপয়েন্টমেন্ট", "অ্যাপয়েনমেন্ট", "সিরিয়াল", "নাম লেখা", "স্লট")
 _GREETING_CUES = ("নমস্কার", "নমষ্কার", "হ্যালো", "হ্যালো?", "শুভ সকাল", "আসসালামু")
 _THANKS_CUES = ("ধন্যবাদ", "থ্যাঙ্ক", "থ্যাংক")
 
@@ -157,8 +156,21 @@ _RELATIVE_DAYS = {"আজ": 0, "আজকে": 0, "কাল": 1, "আগাম�
 # Words that make an utterance more than a simple lookup: a comparison, a
 # list request, a negation, a follow-up. Cheap insurance -- if any appear,
 # abstain rather than answer half the question.
-_COMPLEXITY_CUES = ("সব", "সবগুলো", "তালিকা", "কোন কোন", "আর", "এবং", "না",
-                    "নাকি", "বদলে", "চেয়ে", "ছাড়া", "কিন্তু", "অন্য")
+_COMPLEXITY_CUES = (
+    "সব",
+    "সবগুলো",
+    "তালিকা",
+    "কোন কোন",
+    "আর",
+    "এবং",
+    "না",
+    "নাকি",
+    "বদলে",
+    "চেয়ে",
+    "ছাড়া",
+    "কিন্তু",
+    "অন্য",
+)
 
 _RE_WS = re.compile(r"\s+")
 _RE_PUNCT = re.compile(r"[।?!,.;:'\"()\-]+")
@@ -182,7 +194,7 @@ def _best_window_ratio(needle: str, haystack_words: list[str]) -> float:
     best = 0.0
     for width in {max(1, span - 1), span, span + 1}:
         for i in range(max(1, len(haystack_words) - width + 1)):
-            window = " ".join(haystack_words[i:i + width])
+            window = " ".join(haystack_words[i : i + width])
             best = max(best, difflib.SequenceMatcher(None, needle, window).ratio())
     return best
 
@@ -288,8 +300,14 @@ class FastPathResult:
 
 
 def _empty_slots(**kw) -> dict:
-    slots = {"test_name": None, "doctor_name": None, "date": None,
-             "time_slot": None, "patient_name": None, "phone": None}
+    slots = {
+        "test_name": None,
+        "doctor_name": None,
+        "date": None,
+        "time_slot": None,
+        "patient_name": None,
+        "phone": None,
+    }
     slots.update(kw)
     return slots
 
@@ -414,8 +432,9 @@ class FastPath:
             if name and score >= COMMIT_FLOOR and (score - runner_up) >= COMMIT_MARGIN:
                 self.stats["served"] += 1
                 logger.info("fast path: test_rate %r (%.2f) from %r", name, score, transcript)
-                return FastPathResult("test_rate", _empty_slots(test_name=form or name),
-                                      score, matched_form=form)
+                return FastPathResult(
+                    "test_rate", _empty_slots(test_name=form or name), score, matched_form=form
+                )
             self.stats["abstained"] += 1
             return None
 
@@ -431,8 +450,7 @@ class FastPath:
             # mismatch it exists to guard against.
             name_text = " ".join(w for w in text.split() if not _any_cue(w, _AVAIL_CUES))
             name, form, score, runner_up = self.catalogue.match(name_text, "doctor")
-            if not (name and score >= COMMIT_FLOOR
-                    and (score - runner_up) >= COMMIT_MARGIN):
+            if not (name and score >= COMMIT_FLOOR and (score - runner_up) >= COMMIT_MARGIN):
                 self.stats["abstained"] += 1
                 return None
             date_iso, confident = self._resolve_date(text)
@@ -440,21 +458,25 @@ class FastPath:
                 self.stats["abstained"] += 1
                 return None
             self.stats["served"] += 1
-            logger.info("fast path: doctor_availability %r (%.2f) date=%s from %r",
-                        name, score, date_iso, transcript)
-            return FastPathResult("doctor_availability",
-                                  _empty_slots(doctor_name=form or name, date=date_iso),
-                                  score, matched_form=form)
+            logger.info(
+                "fast path: doctor_availability %r (%.2f) date=%s from %r", name, score, date_iso, transcript
+            )
+            return FastPathResult(
+                "doctor_availability",
+                _empty_slots(doctor_name=form or name, date=date_iso),
+                score,
+                matched_form=form,
+            )
 
         # Pure greeting or thanks, with no entity and no question in it.
         if _any_cue(text, _GREETING_CUES) and len(text.split()) <= 4:
             self.stats["served"] += 1
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?")
+            return FastPathResult(
+                "smalltalk", _empty_slots(), 1.0, direct_reply_bn="নমস্কার, কী সাহায্য করতে পারি?"
+            )
         if _any_cue(text, _THANKS_CUES) and len(text.split()) <= 4:
             self.stats["served"] += 1
-            return FastPathResult("smalltalk", _empty_slots(), 1.0,
-                                  direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
+            return FastPathResult("smalltalk", _empty_slots(), 1.0, direct_reply_bn="ধন্যবাদ। আর কিছু জানতে চান?")
 
         self.stats["abstained"] += 1
         return None

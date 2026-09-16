@@ -38,6 +38,7 @@ across every function and language with an automated check that runs
 output through verbalize() and fails the build if a colon or bracket
 survives.
 """
+
 from __future__ import annotations
 
 import re
@@ -75,10 +76,7 @@ def _lang(lang: str | None) -> str:
 #    worse outcome than the hole it replaced.
 #  * It is pure Bengali, so it can never itself trip the gate it serves.
 #    main.py asserts exactly that at startup; see _assert_canned_lines_speakable.
-UNSPEAKABLE_ESCALATION = (
-    "দুঃখিত, এই তথ্যটা আমি ঠিকভাবে বলে উঠতে পারছি না। "
-    "কাউন্টারে একবার কথা বলে নিলে ভালো হয়।"
-)
+UNSPEAKABLE_ESCALATION = "দুঃখিত, এই তথ্যটা আমি ঠিকভাবে বলে উঠতে পারছি না। কাউন্টারে একবার কথা বলে নিলে ভালো হয়।"
 
 
 # story title: Answers sound like a person, not a database row
@@ -117,9 +115,7 @@ UNSPEAKABLE_ESCALATION = (
 #                    Do NOT rebook. Someone will follow up.
 # Saying "call back" here would invite a duplicate booking of an appointment
 # that already exists, which is the specific harm this outcome prevents.
-INSUFFICIENT_VERIFIED_INFORMATION_BN = (
-    "আপনার অ্যাপয়েন্টমেন্টটা হয়ে গেছে, কিন্তু বিস্তারিত তথ্যগুলো এই মুহূর্তে মিলিয়ে দেখতে পারছি না। আমাদের থেকে আপনাকে জানানো হবে। আবার বুক করার দরকার নেই।"
-)
+INSUFFICIENT_VERIFIED_INFORMATION_BN = "আপনার অ্যাপয়েন্টমেন্টটা হয়ে গেছে, কিন্তু বিস্তারিত তথ্যগুলো এই মুহূর্তে মিলিয়ে দেখতে পারছি না। আমাদের থেকে আপনাকে জানানো হবে। আবার বুক করার দরকার নেই।"
 
 
 # story title: The same question gets the same answer within one call
@@ -142,9 +138,7 @@ INSUFFICIENT_VERIFIED_INFORMATION_BN = (
 # It therefore states no fact of its own and needs no verified response to
 # render from, which is why it is a bare constant rather than a function
 # taking the previous answer.
-ANSWER_CHANGED_BN = (
-    "একটু আগে আমি অন্য তথ্য বলেছিলাম, এইমাত্র দেখে নিলাম সেটা বদলে গেছে।"
-)
+ANSWER_CHANGED_BN = "একটু আগে আমি অন্য তথ্য বলেছিলাম, এইমাত্র দেখে নিলাম সেটা বদলে গেছে।"
 
 
 # story title: Near matches are offered rather than guessed or refused
@@ -165,9 +159,7 @@ ANSWER_CHANGED_BN = (
 # dropping a candidate turns "which of these two" back into "did you mean
 # this one", which is a guess wearing a question mark. Telling the caller it
 # does not exist would be false; asking them to say it again is true.
-NEAR_MATCH_UNCLEAR_BN = (
-    "দুঃখিত, ঠিক কোনটার কথা বলছেন বুঝতে পারিনি। একটু পরিষ্কার করে নামটা বলবেন?"
-)
+NEAR_MATCH_UNCLEAR_BN = "দুঃখিত, ঠিক কোনটার কথা বলছেন বুঝতে পারিনি। একটু পরিষ্কার করে নামটা বলবেন?"
 
 
 def near_match_prompt(candidates) -> str:
@@ -243,12 +235,14 @@ def _spoken_list(items) -> str:
 
 
 from agent.bn_normalize import detect_language
+
 # ADDED BY SOURAV -- "Caller asks when a doctor sits" story:
 # doctor_schedule_reply() below speaks a doctor's weekly sitting days by
 # name, in whichever of the 4 reply languages it was asked for. See that
 # function's docstring for how this differs from doctor_availability_reply
 # just above it.
 from agent.bn_normalize import weekday_to_words
+
 # ADDED BY SOURAV -- real production bug fix: a caller asking "how long
 # does it take to get the urine test report" was being answered with the
 # test's PRICE instead ("Urine test rate is 200 taka."). Root cause:
@@ -308,16 +302,18 @@ def _spoken_test_name(slots: dict, result: dict, language: str = "bengali") -> s
       English name, instead.
     """
     if language == "bengali":
-        return (result.get("test_name_bn")
-                or slots.get("test_name")
-                or result.get("test_name")
-                or _TEST_FALLBACK["bengali"])
+        return (
+            result.get("test_name_bn")
+            or slots.get("test_name")
+            or result.get("test_name")
+            or _TEST_FALLBACK["bengali"]
+        )
     name = slots.get("test_name") or result.get("test_name")
     return name or _TEST_FALLBACK.get(language, _TEST_FALLBACK["english"])
 
 
 def _name_already_says_test(name: str) -> bool:
-    """"Caller asks what sample is needed" AC (word "test"/"টেস্ট" must
+    """ "Caller asks what sample is needed" AC (word "test"/"টেস্ট" must
     never come up twice). _spoken_test_name() can fall through to the
     catalogue's plain English test_name (e.g. "Widal Test") when no
     Bengali alias is available for that row -- checking only "টেস্ট" in a
@@ -415,14 +411,23 @@ def missing_slot_prompt(intent: str, missing: str, language: str = "bengali") ->
             ("report_send", "phone"): "Could you tell me your registered phone number?",
             # ADDED BY SOURAV -- Phase 1: Database Schema & Policy Tables.
             ("walkin_eligibility", "test_name"): "Which test were you asking about for walk-in?",
-            ("prescription_requirements", "test_name"): "Which test's prescription requirement were you asking about?",
+            (
+                "prescription_requirements",
+                "test_name",
+            ): "Which test's prescription requirement were you asking about?",
             ("insurance_coverage", "test_name"): "Which test would you like to check insurance coverage for?",
             ("insurance_coverage", "insurance_provider_name"): "Which insurance provider do you have?",
             ("billing_balance", "phone"): "Could you tell me your registered phone number?",
             # ADDED BY SOURAV -- "Caller asks the agent to compare two
             # options" story.
-            ("compare_options", "compare_option_a"): "Which two tests or packages would you like me to compare?",
-            ("compare_options", "compare_option_b"): "And what's the second one you'd like to compare it with?",
+            (
+                "compare_options",
+                "compare_option_a",
+            ): "Which two tests or packages would you like me to compare?",
+            (
+                "compare_options",
+                "compare_option_b",
+            ): "And what's the second one you'd like to compare it with?",
             # ADDED BY SOURAV -- "Caller asks to be called back" story.
             # "callback_phone", NOT "phone" -- same collision reasoning as
             # "report_phone" elsewhere in this file (see main.py's
@@ -452,7 +457,10 @@ def missing_slot_prompt(intent: str, missing: str, language: str = "bengali") ->
             ("report_status", "phone"): "Apna registered phone number bata sakte ho?",
             ("report_send", "phone"): "Apna registered phone number bata sakte ho?",
             ("walkin_eligibility", "test_name"): "Kaunse test ke liye walk-in ke baare mein pooch rahe ho?",
-            ("prescription_requirements", "test_name"): "Kaunse test ke prescription ke baare mein pooch rahe ho?",
+            (
+                "prescription_requirements",
+                "test_name",
+            ): "Kaunse test ke prescription ke baare mein pooch rahe ho?",
             ("insurance_coverage", "test_name"): "Kaunse test ke liye insurance coverage check karna hai?",
             ("insurance_coverage", "insurance_provider_name"): "Aapka insurance provider kaunsa hai?",
             ("billing_balance", "phone"): "Apna registered phone number bata sakte ho?",
@@ -504,18 +512,24 @@ def _test_not_found_reply(slots: dict, result: dict, language: str = "bengali") 
     suggestions = result.get("did_you_mean") or []
     if language == "english":
         if suggestions:
-            return (f"I couldn't find a test named '{slots.get('test_name')}'. "
-                     f"Did you mean {', '.join(suggestions)}?")
+            return (
+                f"I couldn't find a test named '{slots.get('test_name')}'. "
+                f"Did you mean {', '.join(suggestions)}?"
+            )
         return f"Sorry, we don't have a test named '{slots.get('test_name')}'."
     elif language == "hinglish":
         if suggestions:
-            return (f"'{slots.get('test_name')}' naam ka test nahi mila. "
-                     f"Kya aap kehna chahte the {', '.join(suggestions)}?")
+            return (
+                f"'{slots.get('test_name')}' naam ka test nahi mila. "
+                f"Kya aap kehna chahte the {', '.join(suggestions)}?"
+            )
         return f"Sorry, '{slots.get('test_name')}' naam ka test hamari list mein nahi hai."
     elif language == "banglish":
         if suggestions:
-            return (f"'{slots.get('test_name')}' name-r test khunje pelam na. "
-                     f"Apni ki bolte chaichen {', '.join(suggestions)}?")
+            return (
+                f"'{slots.get('test_name')}' name-r test khunje pelam na. "
+                f"Apni ki bolte chaichen {', '.join(suggestions)}?"
+            )
         return f"Dukkhito, '{slots.get('test_name')}' name-r kono test amader list-e nei."
     else:  # bengali
         # STORY [Answer Quality and Grounding]
@@ -545,8 +559,10 @@ def _test_not_found_reply(slots: dict, result: dict, language: str = "bengali") 
             # comma-separated list where a person would say "or". The
             # options now sit inside the question rather than being
             # announced by it.
-            return (f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
-                    f"আপনি কি {_spoken_list(suggestions_bn)} বলতে চাইছেন?")
+            return (
+                f"'{slots.get('test_name')}' নামে টেস্ট খুঁজে পাইনি। "
+                f"আপনি কি {_spoken_list(suggestions_bn)} বলতে চাইছেন?"
+            )
         return f"দুঃখিত, '{slots.get('test_name')}' নামে কোনো টেস্ট আমাদের তালিকায় নেই।"
 
 
@@ -565,10 +581,7 @@ def _spoken_department(slots: dict, result: dict) -> str:
     Prefer the seeded Bengali alias; failing that, echo the caller's own words,
     which is what a person at the counter would do.
     """
-    return (result.get("department_bn")
-            or slots.get("department")
-            or result.get("department")
-            or "এই বিভাগে")
+    return result.get("department_bn") or slots.get("department") or result.get("department") or "এই বিভাগে"
 
 
 # "Caller asks what sample is needed" (Conversation: Information and
@@ -642,7 +655,7 @@ def _digit_faithful_rate(raw_rate) -> str:
 
 
 def test_rate_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks the price of a test" (Epic: Conversation -- Information
+    """ "Caller asks the price of a test" (Epic: Conversation -- Information
     and Enquiry). AC: "The price is read from the live catalogue and
     spoken as a natural sentence with the sample type and reporting time.
     The figure is a template substitution and is never composed by the
@@ -690,7 +703,11 @@ def test_rate_reply(slots: dict, result: dict, language: str = "bengali") -> str
     if language == "english":
         reply = f"{name} rate is {rate} rupees." if name_has_test else f"{name} test rate is {rate} rupees."
     elif language == "hinglish":
-        reply = f"{name} ka rate {rate} rupaye hai." if name_has_test else f"{name} test ka rate {rate} rupaye hai."
+        reply = (
+            f"{name} ka rate {rate} rupaye hai."
+            if name_has_test
+            else f"{name} test ka rate {rate} rupaye hai."
+        )
     elif language == "banglish":
         reply = f"{name} rate {rate} taka." if name_has_test else f"{name} test-er rate {rate} taka."
     else:  # bengali
@@ -700,7 +717,7 @@ def test_rate_reply(slots: dict, result: dict, language: str = "bengali") -> str
 
 
 def sample_type_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks what sample is needed" (Epic: Conversation --
+    """ "Caller asks what sample is needed" (Epic: Conversation --
     Information and Enquiry). AC: "The sample type is spoken as a natural
     clause rather than a field and a colon. The English clinical term is
     preserved if the caller used it. Multiple samples for one test are
@@ -882,17 +899,22 @@ def _test_preparation_unavailable_reply(name: str, language: str = "bengali") ->
     same discipline as agent/outcomes.py's insufficient-verified-
     information outcome."""
     if language == "english":
-        return (f"I don't have preparation instructions for {name} yet. "
-                 f"Please check with the counter or your doctor.")
+        return (
+            f"I don't have preparation instructions for {name} yet. "
+            f"Please check with the counter or your doctor."
+        )
     elif language == "hinglish":
-        return (f"{name} ke liye abhi preparation ki jaankari mere paas nahi hai. "
-                 f"Counter ya apne doctor se check kar lijiye.")
+        return (
+            f"{name} ke liye abhi preparation ki jaankari mere paas nahi hai. "
+            f"Counter ya apne doctor se check kar lijiye."
+        )
     elif language == "banglish":
-        return (f"{name}-er jonno ekhon preparation-er information amar kache nei. "
-                 f"Counter othoba apnar doctor-ke jiggesh korben.")
+        return (
+            f"{name}-er jonno ekhon preparation-er information amar kache nei. "
+            f"Counter othoba apnar doctor-ke jiggesh korben."
+        )
     else:  # bengali
-        return (f"{name}-এর জন্য এখন প্রস্তুতির তথ্য আমার কাছে নেই। "
-                 f"দয়া করে কাউন্টারে বা আপনার ডাক্তারকে জিজ্ঞেস করুন।")
+        return f"{name}-এর জন্য এখন প্রস্তুতির তথ্য আমার কাছে নেই। দয়া করে কাউন্টারে বা আপনার ডাক্তারকে জিজ্ঞেস করুন।"
 
 
 _ADVISORY_SCRIPT_FIELD_FOR_LANGUAGE = {
@@ -904,7 +926,7 @@ _ADVISORY_SCRIPT_FIELD_FOR_LANGUAGE = {
 
 
 def test_preparation_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks how to prepare for a test" (Epic: Conversation --
+    """ "Caller asks how to prepare for a test" (Epic: Conversation --
     Information and Enquiry). Speaks the business's own supplied
     preparation script (clinic-api/seed.py's LAB_TEST_ADVISORIES,
     sourced verbatim from the lab_tests_with_fallback_config sample
@@ -992,27 +1014,38 @@ def doctor_availability_reply(slots: dict, result: dict, language: str = "bengal
         date_txt = f" {result.get('date')}" if result.get("date") else " today"
 
         if language == "english":
-            return (f"Yes,{date_txt} {name} will be in chamber. The chamber hours are {hours}. "
-                    f"Would you like to book for today or another day?")
+            return (
+                f"Yes,{date_txt} {name} will be in chamber. The chamber hours are {hours}. "
+                f"Would you like to book for today or another day?"
+            )
         elif language == "hinglish":
-            return (f"Haan,{date_txt} {name} chamber mein honge. Chamber ka time hai {hours}. "
-                    f"Aaj ke liye appointment karna chahte ho ya kisi aur din ke liye?")
+            return (
+                f"Haan,{date_txt} {name} chamber mein honge. Chamber ka time hai {hours}. "
+                f"Aaj ke liye appointment karna chahte ho ya kisi aur din ke liye?"
+            )
         else:  # bengali
             date_txt_bn = f" {result.get('date')} তারিখে" if result.get("date") else " আজ"
-            return (f"হ্যাঁ,{date_txt_bn} {name} চেম্বারে থাকবেন। চেম্বারের সময় {hours}। "
-                    f"আজকের জন্যই অ্যাপয়েন্টমেন্ট করবেন, নাকি অন্য কোনো দিনের জন্য?")
+            return (
+                f"হ্যাঁ,{date_txt_bn} {name} চেম্বারে থাকবেন। চেম্বারের সময় {hours}। "
+                f"আজকের জন্যই অ্যাপয়েন্টমেন্ট করবেন, নাকি অন্য কোনো দিনের জন্য?"
+            )
 
     next_date = result.get("next_available_date")
     if next_date:
         if language == "english":
-            return (f"{name} won't be available that day. The next available date is {next_date}. "
-                    f"Would you like to book for that day?")
+            return (
+                f"{name} won't be available that day. The next available date is {next_date}. "
+                f"Would you like to book for that day?"
+            )
         elif language == "hinglish":
-            return (f"{name} us din nahi honge. Agla available date hai {next_date}. "
-                    f"Us din ke liye appointment karna chahte ho?")
+            return (
+                f"{name} us din nahi honge. Agla available date hai {next_date}. "
+                f"Us din ke liye appointment karna chahte ho?"
+            )
         else:  # bengali
-            return (f"{name} ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিনটা হলো {next_date}। "
-                    f"ওই দিনের জন্য অ্যাপয়েন্টমেন্ট করতে চান?")
+            return (
+                f"{name} ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিনটা হলো {next_date}। ওই দিনের জন্য অ্যাপয়েন্টমেন্ট করতে চান?"
+            )
 
     if language == "english":
         return f"{name} doesn't have a fixed schedule right now. Please check at our counter."
@@ -1062,8 +1095,7 @@ def date_range_confirm_prompt(start_iso: str, end_iso: str) -> str:
     synthesis, so the caller hears "সেপ্টেম্বর মাসের চোদ্দো তারিখ" rather than
     a string of Latin digits the tokenizer would silently drop.
     """
-    return (f"আপনি কি {start_iso} থেকে {end_iso} — এই সময়ের মধ্যে "
-            f"জানতে চাইছেন?")
+    return f"আপনি কি {start_iso} থেকে {end_iso} — এই সময়ের মধ্যে জানতে চাইছেন?"
 
 
 def booking_confirm_prompt(slots: dict) -> str:
@@ -1106,10 +1138,12 @@ def booking_confirm_prompt(slots: dict) -> str:
     # alias is a data defect, and confirming a booking against a name the
     # caller cannot hear is worse than escalating.
     doctor = slots.get("doctor_name_bn") or slots.get("doctor_name")
-    return (f"একটু মিলিয়ে নিই। "
-            f"রোগী {slots['patient_name']}, ডাঃ {doctor}, "
-            f"{slots['date']} তারিখে, সময় {slots['time_slot']}, "
-            f"ফোন {slots['phone']}। সব ঠিক আছে?")
+    return (
+        f"একটু মিলিয়ে নিই। "
+        f"রোগী {slots['patient_name']}, ডাঃ {doctor}, "
+        f"{slots['date']} তারিখে, সময় {slots['time_slot']}, "
+        f"ফোন {slots['phone']}। সব ঠিক আছে?"
+    )
 
 
 # story title: Every critical value is read back before it is used
@@ -1156,7 +1190,7 @@ def _spoken_weekday_list(weekdays: list[int], language: str = "bengali") -> str:
 
 
 def doctor_schedule_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks when a doctor sits" (Epic: Conversation -- Information
+    """ "Caller asks when a doctor sits" (Epic: Conversation -- Information
     and Enquiry). A caller asking, in general, which days a named doctor
     sits -- with no date mentioned at all -- gets that doctor's full
     recurring weekly schedule read back naturally, in whichever of the 4
@@ -1213,12 +1247,14 @@ def doctor_schedule_reply(slots: dict, result: dict, language: str = "bengali") 
     groups = _group_schedule_by_hours(schedule)
 
     if language == "english":
-        clauses = [f"on {_spoken_weekday_list(days, language)}, chamber hours {hours}"
-                   for hours, days in groups]
+        clauses = [
+            f"on {_spoken_weekday_list(days, language)}, chamber hours {hours}" for hours, days in groups
+        ]
         return f"{name} sits {', and '.join(clauses)}."
     elif language == "hinglish":
-        clauses = [f"{_spoken_weekday_list(days, language)} ko {hours} baithte hain"
-                   for hours, days in groups]
+        clauses = [
+            f"{_spoken_weekday_list(days, language)} ko {hours} baithte hain" for hours, days in groups
+        ]
         return f"{name} {', aur '.join(clauses)}."
     elif language == "banglish":
         # "shomoy-e" (not "{hours}-e") deliberately keeps the Bengali
@@ -1228,12 +1264,12 @@ def doctor_schedule_reply(slots: dict, result: dict, language: str = "bengali") 
         # glued straight onto digits it is about to rewrite is exactly
         # the kind of artefact "Answers sound like a person" story 2 was
         # about eliminating.
-        clauses = [f"{_spoken_weekday_list(days, language)} {hours} shomoy-e boshen"
-                   for hours, days in groups]
+        clauses = [
+            f"{_spoken_weekday_list(days, language)} {hours} shomoy-e boshen" for hours, days in groups
+        ]
         return f"{name} {', ar '.join(clauses)}."
     else:  # bengali
-        clauses = [f"{_spoken_weekday_list(days, language)} {hours} সময়ে বসেন"
-                   for hours, days in groups]
+        clauses = [f"{_spoken_weekday_list(days, language)} {hours} সময়ে বসেন" for hours, days in groups]
         return f"{name} {', আর '.join(clauses)}।"
 
 
@@ -1277,22 +1313,28 @@ def booking_reply(slots: dict, result: dict, language: str = "bengali") -> str:
     if result.get("success"):
         # Preserve exact values in all languages
         doctor = _spoken_doctor_name(slots, result, language=language)
-        date = result['date']
-        time_slot = result['time_slot']
-        confirmation_id = result['confirmation_id']
-        
+        date = result["date"]
+        time_slot = result["time_slot"]
+        confirmation_id = result["confirmation_id"]
+
         if language == "english":
-            reply = (f"Your appointment is confirmed. "
-                    f"{doctor}, {date}, time {time_slot}. "
-                    f"Your confirmation number is {confirmation_id}.")
+            reply = (
+                f"Your appointment is confirmed. "
+                f"{doctor}, {date}, time {time_slot}. "
+                f"Your confirmation number is {confirmation_id}."
+            )
         elif language == "hinglish":
-            reply = (f"Aapka appointment confirm ho gaya. "
-                    f"{doctor}, {date}, time {time_slot}. "
-                    f"Aapka confirmation number hai {confirmation_id}.")
+            reply = (
+                f"Aapka appointment confirm ho gaya. "
+                f"{doctor}, {date}, time {time_slot}. "
+                f"Aapka confirmation number hai {confirmation_id}."
+            )
         else:  # bengali
-            reply = (f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
-                    f"{doctor}, {date}, সময় {time_slot}। "
-                    f"আপনার কনফার্মেশন নম্বর হলো {confirmation_id}।")
+            reply = (
+                f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
+                f"{doctor}, {date}, সময় {time_slot}। "
+                f"আপনার কনফার্মেশন নম্বর হলো {confirmation_id}।"
+            )
         # ADDED BY CHAKRAVARDHAN -- "no flow may dead-end on a smartphone":
         # tell the caller plainly whether a written copy is actually on its
         # way, using the notification ledger status clinic-api's
@@ -1322,8 +1364,7 @@ def booking_reply(slots: dict, result: dict, language: str = "bengali") -> str:
             elif language == "hinglish":
                 return f"Wo time already book ho gaya, lekin {', '.join(alts)} available hain. Kaunsa prefer karte ho?"
             else:  # bengali
-                return (f"ওই সময়টা বুক হয়ে গেছে, তবে {_spoken_list(alts)} "
-                        f"সময়গুলো ফাঁকা আছে। কোনটা চান?")
+                return f"ওই সময়টা বুক হয়ে গেছে, তবে {_spoken_list(alts)} সময়গুলো ফাঁকা আছে। কোনটা চান?"
         if language == "english":
             return "That time is already booked, and there are no nearby available times."
         elif language == "hinglish":
@@ -1337,7 +1378,7 @@ def booking_reply(slots: dict, result: dict, language: str = "bengali") -> str:
             return f"Sorry, '{slots.get('doctor_name')}' naam ka doctor nahi mila."
         else:  # bengali
             return f"দুঃখিত, '{slots.get('doctor_name')}' নামে কোনো ডাক্তার খুঁজে পেলাম না।"
-    
+
     if language == "english":
         return "Sorry, couldn't book the appointment. Please try again later, or contact our counter."
     elif language == "hinglish":
@@ -1391,21 +1432,29 @@ def booking_confirmation_prompt(slots: dict, language: str = "bengali") -> str:
     phone = slots.get("phone") or ""
 
     if language == "english":
-        return (f"Let me confirm before I book this. "
-                f"{doctor}, {date}, time {time_slot}, patient {patient_name}, "
-                f"phone number {phone}. Is that all correct?")
+        return (
+            f"Let me confirm before I book this. "
+            f"{doctor}, {date}, time {time_slot}, patient {patient_name}, "
+            f"phone number {phone}. Is that all correct?"
+        )
     elif language == "hinglish":
-        return (f"Book karne se pehle confirm kar lete hain. "
-                f"{doctor}, {date}, time {time_slot}, patient {patient_name}, "
-                f"phone number {phone}. Sab sahi hai?")
+        return (
+            f"Book karne se pehle confirm kar lete hain. "
+            f"{doctor}, {date}, time {time_slot}, patient {patient_name}, "
+            f"phone number {phone}. Sab sahi hai?"
+        )
     elif language == "banglish":
-        return (f"Book korar age ekbar confirm kore nin. "
-                f"{doctor}, {date}, time {time_slot}, patient-er naam {patient_name}, "
-                f"phone number {phone}. Sob thik ache to?")
+        return (
+            f"Book korar age ekbar confirm kore nin. "
+            f"{doctor}, {date}, time {time_slot}, patient-er naam {patient_name}, "
+            f"phone number {phone}. Sob thik ache to?"
+        )
     else:  # bengali
-        return (f"বুক করার আগে একবার শুনে নিন। "
-                f"{doctor}, {date}, সময় {time_slot}, রোগীর নাম {patient_name}, "
-                f"ফোন নম্বর {phone}। সব ঠিক আছে তো?")
+        return (
+            f"বুক করার আগে একবার শুনে নিন। "
+            f"{doctor}, {date}, সময় {time_slot}, রোগীর নাম {patient_name}, "
+            f"ফোন নম্বর {phone}। সব ঠিক আছে তো?"
+        )
 
 
 def booking_correction_prompt(language: str = "bengali") -> str:
@@ -1450,17 +1499,23 @@ def reschedule_reply(slots: dict, result: dict, language: str = "bengali") -> st
         time_slot = result["time_slot"]
         confirmation_id = result["confirmation_id"]
         if language == "english":
-            reply = (f"Your appointment has been moved. "
-                     f"{doctor}, {date}, time {time_slot}. "
-                     f"Your reference number stays the same: {confirmation_id}.")
+            reply = (
+                f"Your appointment has been moved. "
+                f"{doctor}, {date}, time {time_slot}. "
+                f"Your reference number stays the same: {confirmation_id}."
+            )
         elif language == "hinglish":
-            reply = (f"Aapka appointment reschedule ho gaya. "
-                     f"{doctor}, {date}, time {time_slot}. "
-                     f"Aapka reference number same hai: {confirmation_id}.")
+            reply = (
+                f"Aapka appointment reschedule ho gaya. "
+                f"{doctor}, {date}, time {time_slot}. "
+                f"Aapka reference number same hai: {confirmation_id}."
+            )
         else:  # bengali
-            reply = (f"আপনার অ্যাপয়েন্টমেন্ট পরিবর্তন করা হয়েছে। "
-                     f"{doctor}, {date}, সময় {time_slot}। "
-                     f"রেফারেন্স নম্বর একই থাকছে: {confirmation_id}।")
+            reply = (
+                f"আপনার অ্যাপয়েন্টমেন্ট পরিবর্তন করা হয়েছে। "
+                f"{doctor}, {date}, সময় {time_slot}। "
+                f"রেফারেন্স নম্বর একই থাকছে: {confirmation_id}।"
+            )
         return reply + _written_confirmation_clause(result, language)
 
     reason = result.get("reason")
@@ -1472,8 +1527,7 @@ def reschedule_reply(slots: dict, result: dict, language: str = "bengali") -> st
             elif language == "hinglish":
                 return f"Wo time already book ho gaya, lekin {', '.join(alts)} available hain. Kaunsa prefer karte ho?"
             else:  # bengali
-                return (f"ওই সময়টা বুক হয়ে গেছে, তবে {_spoken_list(alts)} "
-                        f"সময়গুলো ফাঁকা আছে। কোনটা চান?")
+                return f"ওই সময়টা বুক হয়ে গেছে, তবে {_spoken_list(alts)} সময়গুলো ফাঁকা আছে। কোনটা চান?"
         if language == "english":
             return "That time is already booked, and there are no nearby available times."
         elif language == "hinglish":
@@ -1491,7 +1545,9 @@ def reschedule_reply(slots: dict, result: dict, language: str = "bengali") -> st
         if language == "english":
             return "That appointment has already been cancelled, so there's nothing to reschedule."
         elif language == "hinglish":
-            return "Wo appointment pehle hi cancel ho chuka hai, isliye reschedule karne ke liye kuch nahi hai."
+            return (
+                "Wo appointment pehle hi cancel ho chuka hai, isliye reschedule karne ke liye kuch nahi hai."
+            )
         else:  # bengali
             return "এই অ্যাপয়েন্টমেন্টটা আগেই বাতিল হয়ে গেছে, তাই নতুন করে সময় দেওয়ার কিছু নেই।"
     if reason == "doctor_not_available_that_day":
@@ -1533,8 +1589,10 @@ def cancel_reply(slots: dict, result: dict, language: str = "bengali") -> str:
         elif language == "hinglish":
             reply = f"Aapka {date} ka {time_slot} appointment cancel kar diya gaya hai. Reference number {confirmation_id}."
         else:  # bengali
-            reply = (f"আপনার {date} তারিখের {time_slot} সময়ের অ্যাপয়েন্টমেন্টটা বাতিল করা হয়েছে। "
-                     f"রেফারেন্স নম্বর {confirmation_id}।")
+            reply = (
+                f"আপনার {date} তারিখের {time_slot} সময়ের অ্যাপয়েন্টমেন্টটা বাতিল করা হয়েছে। "
+                f"রেফারেন্স নম্বর {confirmation_id}।"
+            )
         return reply + _written_confirmation_clause(result, language)
 
     if result.get("reason") == "appointment_not_found":
@@ -1568,14 +1626,14 @@ def doctors_by_department_reply(slots: dict, result: dict, language: str = "beng
     if not doctors:
         if filtered_by_date:
             if language == "english":
-                return (f"Sorry, there are no doctors in {department} today. "
-                         f"You can ask about another day.")
+                return f"Sorry, there are no doctors in {department} today. You can ask about another day."
             elif language == "hinglish":
-                return (f"Sorry, {department} department mein aaj koi doctor nahi hai. "
-                         f"Aur din ke baare mein pooch sakte ho.")
+                return (
+                    f"Sorry, {department} department mein aaj koi doctor nahi hai. "
+                    f"Aur din ke baare mein pooch sakte ho."
+                )
             else:  # bengali
-                return (f"দুঃখিত, {department} বিভাগে আজ কোনো ডাক্তার নেই। "
-                         f"অন্য কোনো দিনের কথা জিজ্ঞেস করতে পারেন।")
+                return f"দুঃখিত, {department} বিভাগে আজ কোনো ডাক্তার নেই। অন্য কোনো দিনের কথা জিজ্ঞেস করতে পারেন।"
         if language == "english":
             return f"There are no doctors in {department}."
         elif language == "hinglish":
@@ -1652,6 +1710,7 @@ def doctors_by_department_reply(slots: dict, result: dict, language: str = "beng
 # `masked_phone` field is used instead, kept in the same masked shape.
 # =============================================================================
 
+
 def _last4(phone: str | None) -> str:
     """Rule 10. A local copy of clinic-api/main.py's `_mask_phone_last4`
     -- duplicated rather than imported because this file (the voice
@@ -1698,26 +1757,46 @@ def report_ambiguous_reply(result: dict, language: str = "bengali") -> str:
     clinic-api's `candidates` list (see main.py's report_status())."""
     names = [c["test_name"] for c in (result.get("candidates") or [])]
     if language == "english":
-        listing = ", ".join(names[:-1]) + f", and {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        listing = (
+            ", ".join(names[:-1]) + f", and {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        )
         return f"You have more than one report on file -- {listing}. Which one do you mean?"
     elif language == "hinglish":
-        listing = ", ".join(names[:-1]) + f", aur {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        listing = (
+            ", ".join(names[:-1]) + f", aur {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        )
         return f"Aapke naam pe ek se zyada report hai -- {listing}. Kaunsi wali chahiye?"
     elif language == "banglish":
-        listing = ", ".join(names[:-1]) + f", ar {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        listing = (
+            ", ".join(names[:-1]) + f", ar {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        )
         return f"Apnar naame ekadhik report ache -- {listing}. Konta bolchen?"
     else:  # bengali
-        listing = ", ".join(names[:-1]) + f" এবং {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        listing = (
+            ", ".join(names[:-1]) + f" এবং {names[-1]}" if len(names) > 1 else (names[0] if names else "")
+        )
         return f"আপনার নামে একাধিক রিপোর্ট আছে -- {listing}। কোনটার কথা বলছেন?"
 
 
 _STATUS_WORDS = {
-    "NOT_READY": {"english": "not ready yet", "hinglish": "abhi ready nahi hai",
-                  "banglish": "ekhono ready hoyni", "bengali": "এখনো তৈরি হয়নি"},
-    "PROCESSING": {"english": "still being processed", "hinglish": "process ho raha hai",
-                   "banglish": "processing chalche", "bengali": "এখনো প্রসেস হচ্ছে"},
-    "CANCELLED": {"english": "cancelled", "hinglish": "cancel ho gaya hai",
-                  "banglish": "cancel hoye geche", "bengali": "বাতিল হয়ে গেছে"},
+    "NOT_READY": {
+        "english": "not ready yet",
+        "hinglish": "abhi ready nahi hai",
+        "banglish": "ekhono ready hoyni",
+        "bengali": "এখনো তৈরি হয়নি",
+    },
+    "PROCESSING": {
+        "english": "still being processed",
+        "hinglish": "process ho raha hai",
+        "banglish": "processing chalche",
+        "bengali": "এখনো প্রসেস হচ্ছে",
+    },
+    "CANCELLED": {
+        "english": "cancelled",
+        "hinglish": "cancel ho gaya hai",
+        "banglish": "cancel hoye geche",
+        "bengali": "বাতিল হয়ে গেছে",
+    },
 }
 
 
@@ -1740,17 +1819,22 @@ def report_status_reply(result: dict, language: str = "bengali") -> str:
     if status == "READY":
         if result.get("delivery_enabled"):
             if language == "english":
-                return (f"Good news -- your {test_name} report is ready. "
-                        f"Would you like me to send it to your registered phone?")
+                return (
+                    f"Good news -- your {test_name} report is ready. "
+                    f"Would you like me to send it to your registered phone?"
+                )
             elif language == "hinglish":
-                return (f"Achi khabar -- aapka {test_name} report ready hai. "
-                        f"Kya aapke registered phone pe bhej doon?")
+                return (
+                    f"Achi khabar -- aapka {test_name} report ready hai. "
+                    f"Kya aapke registered phone pe bhej doon?"
+                )
             elif language == "banglish":
-                return (f"Bhalo khobor -- apnar {test_name} report ready hoye geche. "
-                        f"Apnar registered phone e pathiye debo?")
+                return (
+                    f"Bhalo khobor -- apnar {test_name} report ready hoye geche. "
+                    f"Apnar registered phone e pathiye debo?"
+                )
             else:  # bengali
-                return (f"সুখবর -- আপনার {test_name} রিপোর্ট তৈরি হয়ে গেছে। "
-                        f"আপনার নিবন্ধিত ফোনে পাঠিয়ে দেব?")
+                return f"সুখবর -- আপনার {test_name} রিপোর্ট তৈরি হয়ে গেছে। আপনার নিবন্ধিত ফোনে পাঠিয়ে দেব?"
         # READY but delivery_enabled is False (Patient I) -- true status,
         # no offer, and no explanation of WHY (that is an internal flag,
         # not something a caller-facing reply should describe -- see
@@ -1786,7 +1870,9 @@ def delivery_blocked_reply(reason: str, language: str = "bengali") -> str:
     (ATTACK 13)."""
     if reason == "DELIVERY_DISABLED":
         if language == "english":
-            return "This report isn't available for phone delivery. Please collect it in person from the clinic."
+            return (
+                "This report isn't available for phone delivery. Please collect it in person from the clinic."
+            )
         elif language == "hinglish":
             return "Yeh report phone pe deliver nahi ho sakti. Please clinic se khud collect kar lein."
         elif language == "banglish":
@@ -1829,7 +1915,9 @@ def otp_requested_reply(result: dict, language: str = "bengali") -> str:
     if language == "english":
         return f"I've sent an OTP to your registered number ending in {masked}. Please tell me the OTP."
     elif language == "hinglish":
-        return f"Aapke registered number, jo {masked} pe khatam hota hai, us par OTP bhej diya hai. OTP bataiye."
+        return (
+            f"Aapke registered number, jo {masked} pe khatam hota hai, us par OTP bhej diya hai. OTP bataiye."
+        )
     elif language == "banglish":
         return f"Apnar registered number, ja {masked} diye shesh, e OTP pathiye diyechi. OTP ta bolun."
     else:  # bengali
@@ -1843,7 +1931,9 @@ def otp_disclosure_refusal_reply(language: str = "bengali") -> str:
     understand, try again" that could read as evasive rather than a
     deliberate refusal."""
     if language == "english":
-        return "I'm not able to tell you the OTP -- please read it from the message on your phone and tell me."
+        return (
+            "I'm not able to tell you the OTP -- please read it from the message on your phone and tell me."
+        )
     elif language == "hinglish":
         return "Main OTP nahi bata sakta -- please apne phone par aaye message se OTP padh kar bataiye."
     elif language == "banglish":
@@ -1886,7 +1976,9 @@ def otp_verify_reply(result: dict, language: str = "bengali") -> str:
         if language == "english":
             return "That OTP has expired. Let me know if you'd still like the report sent, and I'll send a new one."
         elif language == "hinglish":
-            return "Yeh OTP expire ho gaya hai. Agar abhi bhi report chahiye toh bataiye, naya OTP bhej dunga."
+            return (
+                "Yeh OTP expire ho gaya hai. Agar abhi bhi report chahiye toh bataiye, naya OTP bhej dunga."
+            )
         elif language == "banglish":
             return "Ei OTP ta expire hoye geche. Ekhono report chan ki na bolun, notun OTP pathiye debo."
         else:  # bengali
@@ -1907,17 +1999,22 @@ def otp_verify_reply(result: dict, language: str = "bengali") -> str:
         # explicitly points to a fresh flow rather than repeating the
         # same OTP prompt (which would be pointless -- the row is dead).
         if language == "english":
-            return ("You've entered the wrong OTP too many times, so I can't verify it right now. "
-                     "Please ask me to send the report again to get a new OTP.")
+            return (
+                "You've entered the wrong OTP too many times, so I can't verify it right now. "
+                "Please ask me to send the report again to get a new OTP."
+            )
         elif language == "hinglish":
-            return ("Bahut baar galat OTP diya gaya hai, isliye abhi verify nahi kar sakte. "
-                     "Naya OTP ke liye dobara report bhejne ko boliye.")
+            return (
+                "Bahut baar galat OTP diya gaya hai, isliye abhi verify nahi kar sakte. "
+                "Naya OTP ke liye dobara report bhejne ko boliye."
+            )
         elif language == "banglish":
-            return ("Onek bar bhul OTP deoya hoyeche, tai ekhon verify kora jabe na. "
-                     "Notun OTP er jonno abar report pathate bolun.")
+            return (
+                "Onek bar bhul OTP deoya hoyeche, tai ekhon verify kora jabe na. "
+                "Notun OTP er jonno abar report pathate bolun."
+            )
         else:  # bengali
-            return ("অনেকবার ভুল ওটিপি দেওয়া হয়েছে, তাই এখন যাচাই করা যাচ্ছে না। "
-                     "নতুন ওটিপির জন্য আবার রিপোর্ট পাঠাতে বলুন।")
+            return "অনেকবার ভুল ওটিপি দেওয়া হয়েছে, তাই এখন যাচাই করা যাচ্ছে না। নতুন ওটিপির জন্য আবার রিপোর্ট পাঠাতে বলুন।"
 
     if reason == "OTP_NOT_REQUESTED":
         if language == "english":
@@ -1977,7 +2074,7 @@ _PACKAGE_FALLBACK = {
 
 
 def _join_natural(items: list[str], language: str) -> str:
-    """"a, b and c" -- shared list-joining helper for the health-package
+    """ "a, b and c" -- shared list-joining helper for the health-package
     replies below. Reuses _SAMPLE_JOIN_WORD's per-language "and" word
     (already used by _spoken_sample_types() above for exactly this
     purpose) rather than inventing a second word list."""
@@ -1999,10 +2096,12 @@ def _spoken_package_name(slots: dict, result: dict, language: str = "bengali") -
     LabTest/Doctor); every other language always uses the English
     catalogue name, never the Bengali alias."""
     if language == "bengali":
-        return (result.get("package_name_bn")
-                 or slots.get("package_name")
-                 or result.get("package_name")
-                 or _PACKAGE_FALLBACK["bengali"])
+        return (
+            result.get("package_name_bn")
+            or slots.get("package_name")
+            or result.get("package_name")
+            or _PACKAGE_FALLBACK["bengali"]
+        )
     name = slots.get("package_name") or result.get("package_name")
     return name or _PACKAGE_FALLBACK.get(language, _PACKAGE_FALLBACK["english"])
 
@@ -2029,28 +2128,36 @@ def _package_not_found_reply(slots: dict, result: dict, language: str = "bengali
     query = slots.get("package_name") or result.get("query") or ""
     if language == "english":
         if suggestions:
-            return (f"I couldn't find a health package named '{query}'. "
-                     f"Did you mean {_join_natural(suggestions, language)}?")
+            return (
+                f"I couldn't find a health package named '{query}'. "
+                f"Did you mean {_join_natural(suggestions, language)}?"
+            )
         return f"Sorry, we don't have a health package named '{query}'."
     elif language == "hinglish":
         if suggestions:
-            return (f"'{query}' naam ka health package nahi mila. "
-                     f"Kya aap kehna chahte the {_join_natural(suggestions, language)}?")
+            return (
+                f"'{query}' naam ka health package nahi mila. "
+                f"Kya aap kehna chahte the {_join_natural(suggestions, language)}?"
+            )
         return f"Sorry, '{query}' naam ka koi health package hamari list mein nahi hai."
     elif language == "banglish":
         if suggestions:
-            return (f"'{query}' name-r health package khunje pelam na. "
-                     f"Apni ki bolte chaichen {_join_natural(suggestions, language)}?")
+            return (
+                f"'{query}' name-r health package khunje pelam na. "
+                f"Apni ki bolte chaichen {_join_natural(suggestions, language)}?"
+            )
         return f"Dukkhito, '{query}' name-r kono health package amader list-e nei."
     else:  # bengali
         if suggestions:
-            return (f"'{query}' নামে হেলথ প্যাকেজ খুঁজে পাইনি। "
-                     f"আপনি কি বলতে চাইছেন {_join_natural(suggestions, language)}?")
+            return (
+                f"'{query}' নামে হেলথ প্যাকেজ খুঁজে পাইনি। "
+                f"আপনি কি বলতে চাইছেন {_join_natural(suggestions, language)}?"
+            )
         return f"দুঃখিত, '{query}' নামে কোনো হেলথ প্যাকেজ আমাদের তালিকায় নেই।"
 
 
 def health_package_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks about a health package" -- ONE named package's full
+    """ "Caller asks about a health package" -- ONE named package's full
     details, from clinic-api's GET /api/v1/health-packages/search. The
     caller already named (or fast_path/the LLM already matched) a
     specific package -- see health_packages_list_reply() just below for
@@ -2135,7 +2242,9 @@ def health_packages_list_reply(result: dict, language: str = "bengali") -> str:
     entries = []
     for pkg in packages:
         name = pkg.get("package_name_bn") if language == "bengali" else pkg.get("package_name")
-        name = name or pkg.get("package_name") or _PACKAGE_FALLBACK.get(language, _PACKAGE_FALLBACK["english"])
+        name = (
+            name or pkg.get("package_name") or _PACKAGE_FALLBACK.get(language, _PACKAGE_FALLBACK["english"])
+        )
         price = _digit_faithful_rate(pkg.get("price_inr"))
         if language == "english":
             entries.append(f"{name} at {price} rupees")
@@ -2165,12 +2274,18 @@ def health_packages_list_reply(result: dict, language: str = "bengali") -> str:
 # clinic-api are two separate deployables (see agent/tools_client.py's
 # module docstring).
 _CLINIC_WEEKDAY_KEYS = (
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
 )
 
 
 def clinic_info_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Caller asks opening hours, address or directions" -- one intent
+    """ "Caller asks opening hours, address or directions" -- one intent
     backing all three of that story's own bundled phrasings (models.py's
     own ClinicInfo docstring: "When do you open?" / "Where is the
     clinic?" / "Give me directions."), matching the single ClinicInfo
@@ -2205,7 +2320,9 @@ def clinic_info_reply(slots: dict, result: dict, language: str = "bengali") -> s
         if language == "english":
             return "Sorry, I don't have our clinic's information available right now. Please contact our counter."
         elif language == "hinglish":
-            return "Sorry, abhi clinic ki jaankari available nahi hai. Please hamare counter se contact kariye."
+            return (
+                "Sorry, abhi clinic ki jaankari available nahi hai. Please hamare counter se contact kariye."
+            )
         elif language == "banglish":
             return "Dukkhito, ekhon clinic-er tottho available nei. Please amader counter-e jogajog korun."
         else:  # bengali
@@ -2215,9 +2332,7 @@ def clinic_info_reply(slots: dict, result: dict, language: str = "bengali") -> s
     weekday_idx = slots.get("today_weekday")
     hours = result.get("hours") or {}
     today_key = (
-        _CLINIC_WEEKDAY_KEYS[weekday_idx]
-        if weekday_idx is not None and 0 <= weekday_idx <= 6
-        else None
+        _CLINIC_WEEKDAY_KEYS[weekday_idx] if weekday_idx is not None and 0 <= weekday_idx <= 6 else None
     )
     today_hours = hours.get(today_key) if today_key else None
 
@@ -2308,6 +2423,7 @@ def clinic_info_reply(slots: dict, result: dict, language: str = "bengali") -> s
 # information outcome) -- this function is ONLY the spoken half.
 # =============================================================================
 
+
 def human_fallback_reply(language: str = "bengali") -> str:
     """The business's own "connecting you to an expert" script, stored
     verbatim (same "genuine, business-reviewed translation -- store as
@@ -2348,6 +2464,7 @@ def human_fallback_reply(language: str = "bengali") -> str:
 #   2b. caller says no   -> out_of_scope_counter_reply() below.
 # =============================================================================
 
+
 def out_of_scope_reply(language: str = "bengali") -> str:
     """The initial offer for a request no intent covers at all: connect to
     a person, or the caller contacts the counter themselves. Phrased as an
@@ -2357,17 +2474,25 @@ def out_of_scope_reply(language: str = "bengali") -> str:
     (see main.py's "confirm_delivery" pending state for the identical
     shape)."""
     if language == "english":
-        return ("That's not something I'm able to help with here. Would you like me to "
-                 "connect you with one of our staff, or would you rather contact our counter directly?")
+        return (
+            "That's not something I'm able to help with here. Would you like me to "
+            "connect you with one of our staff, or would you rather contact our counter directly?"
+        )
     elif language == "hinglish":
-        return ("Ye main yahan handle nahi kar sakta. Kya aapko hamare staff se connect "
-                 "karwa doon, ya aap seedhe counter par contact karna chahenge?")
+        return (
+            "Ye main yahan handle nahi kar sakta. Kya aapko hamare staff se connect "
+            "karwa doon, ya aap seedhe counter par contact karna chahenge?"
+        )
     elif language == "banglish":
-        return ("Eta ami ekhane help korte parbo na. Apnake ki amader staff-er sathe connect "
-                 "kore debo, naki apni nijei counter-e jogajog korben?")
+        return (
+            "Eta ami ekhane help korte parbo na. Apnake ki amader staff-er sathe connect "
+            "kore debo, naki apni nijei counter-e jogajog korben?"
+        )
     else:  # bengali
-        return ("এটা আমি এখানে সাহায্য করতে পারব না। আপনাকে কি আমাদের স্টাফের সাথে সংযুক্ত করে "
-                 "দেব, নাকি আপনি নিজে কাউন্টারে যোগাযোগ করবেন?")
+        return (
+            "এটা আমি এখানে সাহায্য করতে পারব না। আপনাকে কি আমাদের স্টাফের সাথে সংযুক্ত করে "
+            "দেব, নাকি আপনি নিজে কাউন্টারে যোগাযোগ করবেন?"
+        )
 
 
 def out_of_scope_counter_reply(language: str = "bengali") -> str:
@@ -2376,7 +2501,9 @@ def out_of_scope_counter_reply(language: str = "bengali") -> str:
     loop, then reopen the floor" shape (acknowledge, then ask if anything
     else is needed) rather than just ending on the decline."""
     if language == "english":
-        return "Alright, please contact our counter directly for that. Is there anything else I can help with?"
+        return (
+            "Alright, please contact our counter directly for that. Is there anything else I can help with?"
+        )
     elif language == "hinglish":
         return "Theek hai, iske liye seedhe hamare counter se contact kijiye. Aur kuch madad chahiye?"
     elif language == "banglish":
@@ -2398,8 +2525,9 @@ def out_of_scope_counter_reply(language: str = "bengali") -> str:
 # these stories added is nullable with no default).
 # =============================================================================
 
+
 def walkin_eligibility_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Walk-in Eligibility" story. THREE outcomes, matching clinic-api/
+    """ "Walk-in Eligibility" story. THREE outcomes, matching clinic-api/
     main.py's _walkin_policy_reply_dict() docstring:
 
       1. found=False -> the shared not-found/did-you-mean reply (same
@@ -2420,7 +2548,9 @@ def walkin_eligibility_reply(slots: dict, result: dict, language: str = "bengali
         if language == "english":
             return f"I don't have walk-in policy information for {name} yet. Please check with the counter."
         elif language == "hinglish":
-            return f"{name} ke walk-in policy ki jaankari abhi mere paas nahi hai. Counter se check kar lijiye."
+            return (
+                f"{name} ke walk-in policy ki jaankari abhi mere paas nahi hai. Counter se check kar lijiye."
+            )
         elif language == "banglish":
             return f"{name}-er walk-in policy-r information amar kache ekhon nei. Counter-e jiggesh korben."
         else:  # bengali
@@ -2483,7 +2613,7 @@ def _spoken_channel_list(channels: list, language: str = "bengali") -> str:
 
 
 def prescription_requirements_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Prescription Requirements" story. Same found/policy_available
+    """ "Prescription Requirements" story. Same found/policy_available
     split as walkin_eligibility_reply() above, over prescription_required/
     prescription_channels instead of walkin_eligible/walkin_hours."""
     if not result.get("found"):
@@ -2527,7 +2657,9 @@ def prescription_requirements_reply(slots: dict, result: dict, language: str = "
         if not required:
             return f"না, {name}-এর জন্য ডাক্তারের প্রেসক্রিপশন লাগবে না।"
         if channel_text:
-            return f"হ্যাঁ, {name}-এর জন্য ডাক্তারের প্রেসক্রিপশন লাগবে -- আপনি এটা {channel_text}-এর মাধ্যমে জমা দিতে পারেন।"
+            return (
+                f"হ্যাঁ, {name}-এর জন্য ডাক্তারের প্রেসক্রিপশন লাগবে -- আপনি এটা {channel_text}-এর মাধ্যমে জমা দিতে পারেন।"
+            )
         return f"হ্যাঁ, {name}-এর জন্য ডাক্তারের প্রেসক্রিপশন লাগবে।"
 
 
@@ -2548,7 +2680,7 @@ def _insurance_provider_not_found_reply(slots: dict, result: dict, language: str
 
 
 def insurance_coverage_reply(slots: dict, result: dict, language: str = "bengali") -> str:
-    """"Insurance Coverage Policy" story. FOUR outcomes, matching
+    """ "Insurance Coverage Policy" story. FOUR outcomes, matching
     clinic-api/main.py's insurance_coverage() docstring:
 
       1. test_found=False -> shared not-found/did-you-mean reply (same
@@ -2591,37 +2723,53 @@ def insurance_coverage_reply(slots: dict, result: dict, language: str = "bengali
     covered = status == "COVERED"
 
     if language == "english":
-        base = (f"Good news -- {test_name} is covered under {provider_name}." if covered
-                else f"{test_name} is not covered under {provider_name}." if status == "NOT_COVERED"
-                else f"{test_name} is partially covered under {provider_name}.")
+        base = (
+            f"Good news -- {test_name} is covered under {provider_name}."
+            if covered
+            else f"{test_name} is not covered under {provider_name}."
+            if status == "NOT_COVERED"
+            else f"{test_name} is partially covered under {provider_name}."
+        )
         if pre_auth:
             return base + " Pre-authorization is required before the test."
         return base
     elif language == "hinglish":
-        base = (f"Achi khabar -- {provider_name} mein {test_name} cover hota hai." if covered
-                else f"{provider_name} mein {test_name} cover nahi hota." if status == "NOT_COVERED"
-                else f"{provider_name} mein {test_name} partially cover hota hai.")
+        base = (
+            f"Achi khabar -- {provider_name} mein {test_name} cover hota hai."
+            if covered
+            else f"{provider_name} mein {test_name} cover nahi hota."
+            if status == "NOT_COVERED"
+            else f"{provider_name} mein {test_name} partially cover hota hai."
+        )
         if pre_auth:
             return base + " Test se pehle pre-authorization chahiye hoga."
         return base
     elif language == "banglish":
-        base = (f"Bhalo khobor -- {provider_name}-e {test_name} cover hoy." if covered
-                else f"{provider_name}-e {test_name} cover hoy na." if status == "NOT_COVERED"
-                else f"{provider_name}-e {test_name} partially cover hoy.")
+        base = (
+            f"Bhalo khobor -- {provider_name}-e {test_name} cover hoy."
+            if covered
+            else f"{provider_name}-e {test_name} cover hoy na."
+            if status == "NOT_COVERED"
+            else f"{provider_name}-e {test_name} partially cover hoy."
+        )
         if pre_auth:
             return base + " Test-er age pre-authorization lagbe."
         return base
     else:  # bengali
-        base = (f"সুখবর -- {provider_name}-এর আওতায় {test_name} কভার হয়।" if covered
-                else f"{provider_name}-এর আওতায় {test_name} কভার হয় না।" if status == "NOT_COVERED"
-                else f"{provider_name}-এর আওতায় {test_name} আংশিকভাবে কভার হয়।")
+        base = (
+            f"সুখবর -- {provider_name}-এর আওতায় {test_name} কভার হয়।"
+            if covered
+            else f"{provider_name}-এর আওতায় {test_name} কভার হয় না।"
+            if status == "NOT_COVERED"
+            else f"{provider_name}-এর আওতায় {test_name} আংশিকভাবে কভার হয়।"
+        )
         if pre_auth:
             return base + " টেস্টের আগে প্রি-অথোরাইজেশন লাগবে।"
         return base
 
 
 def billing_balance_reply(result: dict, language: str = "bengali") -> str:
-    """"Outstanding Balance / Billing" story. THREE outcomes, matching
+    """ "Outstanding Balance / Billing" story. THREE outcomes, matching
     clinic-api/main.py's patient_billing() docstring:
 
       1. patient_found=False -> patient_not_found_reply() (reused
@@ -2714,23 +2862,32 @@ def billing_balance_reply(result: dict, language: str = "bengali") -> str:
 # bucket without a combinatorial explosion of new per-language strings.
 # =============================================================================
 
+
 def multi_intent_missing_info_reply(language: str = "bengali") -> str:
     """Fragment for the OTHER question in a combined turn when it is an
     otherwise-answerable intent that is missing its required slot. See the
     module-level note above for why this doesn't reuse missing_slot_prompt()
     or open a pending state."""
     if language == "english":
-        return ("For your other question, I'll need a bit more detail to answer that properly. "
-                 "Could you ask that one again on its own?")
+        return (
+            "For your other question, I'll need a bit more detail to answer that properly. "
+            "Could you ask that one again on its own?"
+        )
     elif language == "hinglish":
-        return ("Aapke doosre sawaal ke liye, mujhe thoda aur detail chahiye hoga. "
-                 "Kya aap wo sawaal alag se dubara pooch sakte hain?")
+        return (
+            "Aapke doosre sawaal ke liye, mujhe thoda aur detail chahiye hoga. "
+            "Kya aap wo sawaal alag se dubara pooch sakte hain?"
+        )
     elif language == "banglish":
-        return ("Apnar onno prashner jonno, thik moto uttor dite amar aro ektu details lagbe. "
-                 "Apni ki oita alada kore abar jiggesh korte parben?")
+        return (
+            "Apnar onno prashner jonno, thik moto uttor dite amar aro ektu details lagbe. "
+            "Apni ki oita alada kore abar jiggesh korte parben?"
+        )
     else:  # bengali
-        return ("আপনার অন্য প্রশ্নটির জন্য, ঠিকমতো উত্তর দিতে আমার আরেকটু বিস্তারিত তথ্য দরকার। "
-                 "আপনি কি প্রশ্নটা আলাদা করে আবার জিজ্ঞেস করতে পারবেন?")
+        return (
+            "আপনার অন্য প্রশ্নটির জন্য, ঠিকমতো উত্তর দিতে আমার আরেকটু বিস্তারিত তথ্য দরকার। "
+            "আপনি কি প্রশ্নটা আলাদা করে আবার জিজ্ঞেস করতে পারবেন?"
+        )
 
 
 def multi_intent_out_of_scope_reply(language: str = "bengali") -> str:
@@ -2738,17 +2895,25 @@ def multi_intent_out_of_scope_reply(language: str = "bengali") -> str:
     "out_of_scope" (agent/llm.py). Non-interactive, unlike
     out_of_scope_reply() -- see the module-level note above."""
     if language == "english":
-        return ("As for your other question, that's not something I'm able to help with here. "
-                 "Please contact our counter, or ask to be connected with our staff for that one.")
+        return (
+            "As for your other question, that's not something I'm able to help with here. "
+            "Please contact our counter, or ask to be connected with our staff for that one."
+        )
     elif language == "hinglish":
-        return ("Aapke doosre sawaal ke liye, wo main yahan handle nahi kar sakta. "
-                 "Uske liye seedhe counter par contact karein, ya hamare staff se connect karne ko bolein.")
+        return (
+            "Aapke doosre sawaal ke liye, wo main yahan handle nahi kar sakta. "
+            "Uske liye seedhe counter par contact karein, ya hamare staff se connect karne ko bolein."
+        )
     elif language == "banglish":
-        return ("Apnar onno prashner jonno, oita ami ekhane help korte parbo na. "
-                 "Oi bepare shorashori counter-e jogajog korun, na hole amader staff-er sathe connect korte bolun.")
+        return (
+            "Apnar onno prashner jonno, oita ami ekhane help korte parbo na. "
+            "Oi bepare shorashori counter-e jogajog korun, na hole amader staff-er sathe connect korte bolun."
+        )
     else:  # bengali
-        return ("আপনার অন্য প্রশ্নটির জন্য, সেটা আমি এখানে সাহায্য করতে পারব না। "
-                 "এর জন্য সরাসরি কাউন্টারে যোগাযোগ করুন, অথবা আমাদের স্টাফের সাথে সংযুক্ত হতে বলুন।")
+        return (
+            "আপনার অন্য প্রশ্নটির জন্য, সেটা আমি এখানে সাহায্য করতে পারব না। "
+            "এর জন্য সরাসরি কাউন্টারে যোগাযোগ করুন, অথবা আমাদের স্টাফের সাথে সংযুক্ত হতে বলুন।"
+        )
 
 
 def multi_intent_needs_separate_flow_reply(language: str = "bengali") -> str:
@@ -2757,17 +2922,25 @@ def multi_intent_needs_separate_flow_reply(language: str = "bengali") -> str:
     fragment regardless of slot completeness. See the module-level note
     above for why these three are never composed inline."""
     if language == "english":
-        return ("As for your other question, that needs a bit more back-and-forth to sort out properly. "
-                 "Could you ask me that one separately, right after this?")
+        return (
+            "As for your other question, that needs a bit more back-and-forth to sort out properly. "
+            "Could you ask me that one separately, right after this?"
+        )
     elif language == "hinglish":
-        return ("Aapke doosre sawaal ke liye, uske liye thoda aur baat-cheet karni padegi taaki sahi tarike se ho sake. "
-                 "Kya aap wo sawaal iske turant baad alag se pooch sakte hain?")
+        return (
+            "Aapke doosre sawaal ke liye, uske liye thoda aur baat-cheet karni padegi taaki sahi tarike se ho sake. "
+            "Kya aap wo sawaal iske turant baad alag se pooch sakte hain?"
+        )
     elif language == "banglish":
-        return ("Apnar onno prashner jonno, oita thik moto shomadhan korte aro kotha bolte hobe. "
-                 "Apni ki oita ei kothar por alada kore jiggesh korte parben?")
+        return (
+            "Apnar onno prashner jonno, oita thik moto shomadhan korte aro kotha bolte hobe. "
+            "Apni ki oita ei kothar por alada kore jiggesh korte parben?"
+        )
     else:  # bengali
-        return ("আপনার অন্য প্রশ্নটির জন্য, সেটা ঠিকমতো সমাধান করতে আরেকটু কথা বলা দরকার। "
-                 "আপনি কি এর পরেই প্রশ্নটা আলাদা করে জিজ্ঞেস করতে পারবেন?")
+        return (
+            "আপনার অন্য প্রশ্নটির জন্য, সেটা ঠিকমতো সমাধান করতে আরেকটু কথা বলা দরকার। "
+            "আপনি কি এর পরেই প্রশ্নটা আলাদা করে জিজ্ঞেস করতে পারবেন?"
+        )
 
 
 # ADDED BY SOURAV -- "Caller asks the agent to compare two options" story.
@@ -2798,15 +2971,30 @@ def _spoken_compare_entity_name(given_name: str, entity: dict, language: str = "
     kind = entity.get("kind")
     if language == "bengali":
         if kind == "test":
-            return entity.get("test_name_bn") or given_name or entity.get("test_name") or _TEST_FALLBACK["bengali"]
+            return (
+                entity.get("test_name_bn")
+                or given_name
+                or entity.get("test_name")
+                or _TEST_FALLBACK["bengali"]
+            )
         if kind == "package":
-            return (entity.get("package_name_bn") or given_name
-                     or entity.get("package_name") or _PACKAGE_FALLBACK["bengali"])
+            return (
+                entity.get("package_name_bn")
+                or given_name
+                or entity.get("package_name")
+                or _PACKAGE_FALLBACK["bengali"]
+            )
         return given_name or _TEST_FALLBACK["bengali"]
     if kind == "test":
-        return given_name or entity.get("test_name") or _TEST_FALLBACK.get(language, _TEST_FALLBACK["english"])
+        return (
+            given_name or entity.get("test_name") or _TEST_FALLBACK.get(language, _TEST_FALLBACK["english"])
+        )
     if kind == "package":
-        return given_name or entity.get("package_name") or _PACKAGE_FALLBACK.get(language, _PACKAGE_FALLBACK["english"])
+        return (
+            given_name
+            or entity.get("package_name")
+            or _PACKAGE_FALLBACK.get(language, _PACKAGE_FALLBACK["english"])
+        )
     return given_name or _TEST_FALLBACK.get(language, _TEST_FALLBACK["english"])
 
 
@@ -2871,9 +3059,10 @@ def _capped_extra_tests_phrase(extra: list[dict], language: str) -> str:
     return phrase
 
 
-def compare_options_reply(name_a: str, name_b: str, entity_a: dict, entity_b: dict,
-                            comparison: dict, language: str = "bengali") -> str:
-    """"Caller asks the agent to compare two options" story. Renders
+def compare_options_reply(
+    name_a: str, name_b: str, entity_a: dict, entity_b: dict, comparison: dict, language: str = "bengali"
+) -> str:
+    """ "Caller asks the agent to compare two options" story. Renders
     agent/compare_flow.py's build_comparison() output (`comparison`) into
     ONE spoken sentence -- price difference and, only for two health
     packages, the test-count/component difference -- per AC 1 ("stated
@@ -2947,11 +3136,15 @@ def compare_options_reply(name_a: str, name_b: str, entity_a: dict, entity_b: di
                 parts.append("dono mein same tests shamil hain")
             elif comparison["more_tests_side"] == "a":
                 extra = _capped_extra_tests_phrase(comparison["extra_tests_a"], language)
-                base = f"{spoken_a} mein {spoken_b} se {comparison['test_count_delta']} zyada test shamil hain"
+                base = (
+                    f"{spoken_a} mein {spoken_b} se {comparison['test_count_delta']} zyada test shamil hain"
+                )
                 parts.append(f"{base}, jaise {extra}" if extra else base)
             elif comparison["more_tests_side"] == "b":
                 extra = _capped_extra_tests_phrase(comparison["extra_tests_b"], language)
-                base = f"{spoken_b} mein {spoken_a} se {comparison['test_count_delta']} zyada test shamil hain"
+                base = (
+                    f"{spoken_b} mein {spoken_a} se {comparison['test_count_delta']} zyada test shamil hain"
+                )
                 parts.append(f"{base}, jaise {extra}" if extra else base)
             else:
                 parts.append("dono mein alag-alag tests shamil hain")
@@ -3025,7 +3218,7 @@ _AMBIGUOUS_KIND_NOUN = {
 
 
 def ambiguous_reference_reply(kind: str, candidates, language: str = "bengali") -> str:
-    """"Caller asks a follow-up that depends on the previous answer"
+    """ "Caller asks a follow-up that depends on the previous answer"
     story, Acceptance Criterion 2: when a bare pronoun/elliptical
     follow-up's target entity is AMBIGUOUS (two or more different tests,
     doctors, or packages were discussed a moment ago -- see
@@ -3043,7 +3236,8 @@ def ambiguous_reference_reply(kind: str, candidates, language: str = "bengali") 
     ambiguous.
     """
     noun = _AMBIGUOUS_KIND_NOUN.get(kind, _AMBIGUOUS_KIND_NOUN["test"]).get(
-        language, _AMBIGUOUS_KIND_NOUN["test"]["english"])
+        language, _AMBIGUOUS_KIND_NOUN["test"]["english"]
+    )
     names = _join_natural(list(candidates), language)
     if language == "english":
         return f"You mentioned more than one {noun} a moment ago -- which one did you mean, {names}?"
@@ -3135,17 +3329,21 @@ def callback_scheduled_reply(slots: dict, result: dict, language: str = "bengali
         window = slots.get("callback_time_window") or result.get("time_window") or ""
         callback_id = result["callback_id"]
         if language == "english":
-            return (f"I've noted your callback request for {window}. "
-                     f"Your reference number is {callback_id}.")
+            return f"I've noted your callback request for {window}. Your reference number is {callback_id}."
         elif language == "hinglish":
-            return (f"Aapka callback request {window} ke liye note kar liya hai. "
-                     f"Aapka reference number hai {callback_id}.")
+            return (
+                f"Aapka callback request {window} ke liye note kar liya hai. "
+                f"Aapka reference number hai {callback_id}."
+            )
         elif language == "banglish":
-            return (f"Apnar callback request {window}-r jonno note kore niyechi. "
-                     f"Apnar reference number holo {callback_id}.")
+            return (
+                f"Apnar callback request {window}-r jonno note kore niyechi. "
+                f"Apnar reference number holo {callback_id}."
+            )
         else:  # bengali
-            return (f"আপনার কল ব্যাকের অনুরোধ {window}-এর জন্য নথিভুক্ত করা হয়েছে। "
-                     f"আপনার রেফারেন্স নম্বর হলো {callback_id}।")
+            return (
+                f"আপনার কল ব্যাকের অনুরোধ {window}-এর জন্য নথিভুক্ত করা হয়েছে। আপনার রেফারেন্স নম্বর হলো {callback_id}।"
+            )
 
     if language == "english":
         return "Sorry, I couldn't note down your callback request. Please try again later, or contact our counter."
@@ -3192,8 +3390,9 @@ def payment_reply(slots: dict, result: dict, lang: str | None = None) -> str:
 
     result = result or {}
     if result.get("found") and result.get("rate_inr"):
-        reply += t(code, "payment.amount",
-                   name=_spoken_test_name(slots, result, code), rate=result["rate_inr"])
+        reply += t(
+            code, "payment.amount", name=_spoken_test_name(slots, result, code), rate=result["rate_inr"]
+        )
 
     reply += t(code, "payment.no_advance")
     reply += t(code, "payment.counter_only")
@@ -3219,8 +3418,7 @@ def report_collection_reply(slots: dict, result: dict, lang: str | None = None) 
     result = result or {}
 
     hours = result.get("report_time_hours")
-    reply = (t(code, "report.when", hours=hours) if hours
-             else t(code, "report.when_unknown"))
+    reply = t(code, "report.when", hours=hours) if hours else t(code, "report.when_unknown")
 
     reply += t(code, "report.collect")
     reply += t(code, "report.phone_readout")
@@ -3279,8 +3477,7 @@ PURPOSE_HISTORY = "history"
 PURPOSE_BOOKINGS = "bookings"
 
 
-def verification_prompt(factor: str, lang: str | None = None,
-                        purpose: str = PURPOSE_HISTORY) -> str:
+def verification_prompt(factor: str, lang: str | None = None, purpose: str = PURPOSE_HISTORY) -> str:
     """Ask for the proof. Names WHICH kind, never anything about the answer.
 
     A caller who genuinely set a PIN at the counter needs to be told it is
@@ -3362,8 +3559,11 @@ def history_reply(result: dict, lang: str | None = None) -> str:
 
     reply = t(code, "history.intro", count=len(tests))
     for item in tests[:HISTORY_SPOKEN_LIMIT]:
-        name = (item.get("test_name_bn") if code != lang_mod.EN else None) \
-               or item.get("test_name") or t(code, "word.test")
+        name = (
+            (item.get("test_name_bn") if code != lang_mod.EN else None)
+            or item.get("test_name")
+            or t(code, "word.test")
+        )
         key = "history.item_ready" if item.get("report_ready") else "history.item_pending"
         reply += t(code, key, name=name, date=item.get("taken_on", ""))
 
@@ -3407,9 +3607,13 @@ def bookings_reply(result: dict, lang: str | None = None) -> str:
 
     reply = t(code, "timeline.intro", count=len(upcoming))
     for item in upcoming[:BOOKINGS_SPOKEN_LIMIT]:
-        reply += t(code, "timeline.item",
-                   doctor=_spoken_doctor_name({}, item, code),
-                   date=item.get("date") or "", time=item.get("time_slot") or "")
+        reply += t(
+            code,
+            "timeline.item",
+            doctor=_spoken_doctor_name({}, item, code),
+            date=item.get("date") or "",
+            time=item.get("time_slot") or "",
+        )
 
     remaining = len(upcoming) - BOOKINGS_SPOKEN_LIMIT
     if remaining > 0:
