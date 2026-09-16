@@ -481,6 +481,28 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
     return (len(fatal) == 0 and structurally_ok, errors)
 
 
+def _apply_backward_compat_mirror(data: dict) -> None:
+    """Mirror the first entry of the ``intents`` array onto the top-level
+    ``intent`` / ``slots`` keys so that all legacy single-intent dispatch
+    code in main.py / main_pcm.py continues to work unchanged when the LLM
+    returns a multi-intent payload.
+
+    This is a no-op when the ``intents`` key is absent -- a single-intent
+    response already has the top-level keys set directly by _validate().
+
+    ADDED BY SOURAV -- \"Caller asks two questions in one breath\" story.
+    See agent/llm.py's _validate() and test_multi_intent_dispatch.py's
+    TestBackwardCompatMirror for the full contract.
+    """
+    intents = data.get("intents")
+    if not intents or not isinstance(intents, list):
+        return
+    first = intents[0]
+    if isinstance(first, dict):
+        data["intent"] = first.get("intent")
+        data["slots"] = first.get("slots")
+
+
 def extract_intent(transcript_bn: str, max_retries: int = 2) -> tuple[dict, dict]:
     """Returns (parsed JSON dict, diagnostics dict)."""
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(date_expr_list=_DATE_EXPR_LIST)

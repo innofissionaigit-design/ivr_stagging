@@ -34,6 +34,22 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
+
+# gate_support.py lives in tests/ and is imported as a bare module name
+# (``import gate_support``) by the test_gate_*.py suites.  With tests/__init__.py
+# present, pytest imports every test file as ``tests.test_foo`` (package mode),
+# so tests/ is NOT added to sys.path by pytest itself -- meaning bare
+# ``import gate_support`` fails at collection time.
+#
+# The fix is sys.path.append (NOT insert(0,...)).  Pytest prepends the project
+# root so ``tests.test_foo`` always resolves first; ``gate_support`` is found
+# via the appended entry without ever shadowing the package-based imports.
+# Using insert(0,...) instead would make ``test_foo`` resolvable BEFORE
+# ``tests.test_foo``, triggering an "import file mismatch" error (exit code 2).
+_TESTS_DIR = str(Path(__file__).resolve().parent)
+if _TESTS_DIR not in sys.path:
+    sys.path.append(_TESTS_DIR)
 
 
 def _install_stub(name: str, **attrs) -> None:
