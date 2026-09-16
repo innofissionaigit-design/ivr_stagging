@@ -90,6 +90,7 @@ Base = declarative_base()
 # without hardcoding the information inside the voice agent.
 # ============================================================================
 
+
 class ClinicInfo(Base):
     __tablename__ = "clinic_info"
 
@@ -152,6 +153,7 @@ class ClinicInfo(Base):
 # Added so package-related calls can be tested against database data
 # instead of hardcoded responses.
 # ============================================================================
+
 
 class HealthPackage(Base):
     __tablename__ = "health_packages"
@@ -216,6 +218,7 @@ class HealthPackageTest(Base):
 # DEPARTMENT
 # ============================================================================
 
+
 class Department(Base):
     __tablename__ = "departments"
 
@@ -242,6 +245,7 @@ class Department(Base):
 # ============================================================================
 # DOCTOR
 # ============================================================================
+
 
 class Doctor(Base):
     __tablename__ = "doctors"
@@ -289,6 +293,7 @@ class Doctor(Base):
 # ============================================================================
 # DOCTOR SCHEDULE
 # ============================================================================
+
 
 class DoctorSchedule(Base):
     """
@@ -343,6 +348,7 @@ class DoctorSchedule(Base):
 # ============================================================================
 # LAB TEST
 # ============================================================================
+
 
 class LabTest(Base):
     __tablename__ = "lab_tests"
@@ -493,6 +499,7 @@ class LabTest(Base):
 # a real insurer's coverage differs test-by-test.
 # ============================================================================
 
+
 class InsuranceProvider(Base):
     __tablename__ = "insurance_providers"
 
@@ -572,6 +579,7 @@ class InsurancePolicy(Base):
 # Added patient identity, phone, language preference and spoken-name aliases
 # so the agent can test patient-specific report queries.
 # ============================================================================
+
 
 class Patient(Base):
     __tablename__ = "patients"
@@ -714,6 +722,7 @@ class Patient(Base):
 # oversight.
 # ============================================================================
 
+
 class PatientBilling(Base):
     __tablename__ = "patient_billing"
 
@@ -764,6 +773,7 @@ class PatientBilling(Base):
 # Added patient-specific report status so the voice agent can test
 # ready vs not-ready vs missing-report outcomes.
 # ============================================================================
+
 
 class LabReport(Base):
     __tablename__ = "lab_reports"
@@ -884,6 +894,7 @@ class LabReport(Base):
 # CHATGPT ADDITION - CREATED BY SOURAV.
 # ============================================================================
 
+
 # ADDED BY SOURAV -- the user's own explicit instruction: "the otp and
 # other things will not be hardcoded". This replaces two previously
 # hardcoded, guessable literals:
@@ -1003,6 +1014,7 @@ class ReportOTP(Base):
 # Added explicit delivery state and signed-link expiry so the test system
 # can intentionally create success and failure scenarios.
 # ============================================================================
+
 
 class ReportDelivery(Base):
     __tablename__ = "report_deliveries"
@@ -1128,7 +1140,7 @@ class ReportDelivery(Base):
 
 # Appointment.status values. Persisted, so they are a data format.
 APPT_BOOKED = "booked"
-APPT_RESCHEDULED = "rescheduled"   # still live; moved at least once
+APPT_RESCHEDULED = "rescheduled"  # still live; moved at least once
 APPT_CANCELLED = "cancelled"
 
 # Appointment.slot_lock -- see the Appointment docstring. A live row holds
@@ -1172,6 +1184,7 @@ class Appointment(Base):
     date/time_slot and stays ACTIVE, which frees the old slot as a
     side effect of the UPDATE.
     """
+
     __tablename__ = "appointments"
 
     id = Column(Integer, primary_key=True)
@@ -1367,6 +1380,7 @@ class NotificationAttempt(Base):
     here and is flagged in the implementation notes as outstanding work,
     rather than left to look like an oversight.
     """
+
     __tablename__ = "notification_attempts"
     id = Column(Integer, primary_key=True)
 
@@ -1376,13 +1390,13 @@ class NotificationAttempt(Base):
     # cascaded away with it.
     confirmation_id = Column(String, nullable=False, index=True)
 
-    event = Column(String, nullable=False)      # message_templates.EVENT_*
+    event = Column(String, nullable=False)  # message_templates.EVENT_*
     channel = Column(String, nullable=False, default="sms")
-    phone = Column(String, nullable=False)      # E.164 without '+', as sent
-    template_id = Column(String, nullable=False, default="")   # DLT content ID
-    body = Column(String, nullable=False)       # exactly what was submitted
+    phone = Column(String, nullable=False)  # E.164 without '+', as sent
+    template_id = Column(String, nullable=False, default="")  # DLT content ID
+    body = Column(String, nullable=False)  # exactly what was submitted
 
-    status = Column(String, nullable=False, index=True)   # notifications.STATUS_*
+    status = Column(String, nullable=False, index=True)  # notifications.STATUS_*
     provider_message_id = Column(String, nullable=True, index=True)
     attempts = Column(Integer, nullable=False, default=0)
     error_code = Column(String, nullable=True)
@@ -1400,6 +1414,7 @@ class NotificationAttempt(Base):
     # rewritten -- the failure stays a failure in the record.
     acknowledged_by = Column(String, nullable=True)
     acknowledged_at = Column(DateTime, nullable=True)
+
 
 # ===========================================================================
 # PATIENT IDENTITY AND HISTORY
@@ -1443,6 +1458,7 @@ class TestRecord(Base):
     this story is asking anyone to build, and the counter already exists as
     the path for detail -- see the no-smartphone work.
     """
+
     __tablename__ = "test_records"
     id = Column(Integer, primary_key=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
@@ -1454,7 +1470,7 @@ class TestRecord(Base):
     test_name = Column(String, nullable=False)
     test_name_bn = Column(String, nullable=True)
 
-    taken_on = Column(String, nullable=False)          # ISO yyyy-mm-dd
+    taken_on = Column(String, nullable=False)  # ISO yyyy-mm-dd
     report_ready = Column(Boolean, nullable=False, default=False)
     report_ready_on = Column(String, nullable=True)
 
@@ -1475,19 +1491,20 @@ class DisclosureAudit(Base):
     attempted and `outcome` records whether it worked -- an audit trail that
     leaks the thing it audits would be worse than none.
     """
+
     __tablename__ = "disclosure_audit"
     id = Column(Integer, primary_key=True)
 
     # The number the call came from. Stored because it is the only handle on
     # a repeated attacker; NOT stored as proof of anything.
     phone = Column(String, nullable=False, index=True)
-    patient_id = Column(Integer, nullable=True)        # null when no match
+    patient_id = Column(Integer, nullable=True)  # null when no match
 
-    factor = Column(String, nullable=False)            # "pin" | "dob" | "none"
+    factor = Column(String, nullable=False)  # "pin" | "dob" | "none"
     outcome = Column(String, nullable=False, index=True)
     # "verified" | "wrong_factor" | "no_patient" | "locked_out"
     # | "no_factor_available" | "unsafe_audio_path" | "disclosed"
 
-    detail = Column(String, nullable=True)             # never a secret
-    call_id = Column(String, nullable=True)            # ties rows to one call
+    detail = Column(String, nullable=True)  # never a secret
+    call_id = Column(String, nullable=True)  # ties rows to one call
     created_at = Column(DateTime, nullable=False, index=True)

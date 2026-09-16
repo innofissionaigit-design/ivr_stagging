@@ -13,6 +13,10 @@
     "body": null,
     "params": []
   },
+  "GET /api/v1/clinic/info": {
+    "body": null,
+    "params": []
+  },
   "GET /api/v1/doctors/availability": {
     "body": null,
     "params": [
@@ -27,11 +31,34 @@
       "query:department:required"
     ]
   },
+  "GET /api/v1/doctors/schedule": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
+  "GET /api/v1/health-packages": {
+    "body": null,
+    "params": []
+  },
+  "GET /api/v1/health-packages/search": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
   "GET /api/v1/history/audit": {
     "body": null,
     "params": [
       "query:limit:optional",
       "query:outcome:optional"
+    ]
+  },
+  "GET /api/v1/insurance/coverage": {
+    "body": null,
+    "params": [
+      "query:provider_name:required",
+      "query:test_name:required"
     ]
   },
   "GET /api/v1/notifications/failures": {
@@ -42,7 +69,44 @@
       "query:stale_minutes:optional"
     ]
   },
+  "GET /api/v1/patient/billing": {
+    "body": null,
+    "params": [
+      "query:phone:required"
+    ]
+  },
+  "GET /api/v1/reports/link/{token}": {
+    "body": null,
+    "params": [
+      "path:token:required"
+    ]
+  },
+  "GET /api/v1/reports/status": {
+    "body": null,
+    "params": [
+      "query:phone:required",
+      "query:test_name:optional"
+    ]
+  },
+  "GET /api/v1/tests/preparation": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
+  "GET /api/v1/tests/prescription-policy": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
   "GET /api/v1/tests/search": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
+  "GET /api/v1/tests/walkin-policy": {
     "body": null,
     "params": [
       "query:name:required"
@@ -92,6 +156,20 @@
     "params": [
       "path:confirmation_id:required"
     ]
+  },
+  "POST /api/v1/callbacks": {
+    "body": {
+      "properties": [
+        "phone",
+        "reason",
+        "time_window"
+      ],
+      "required": [
+        "phone",
+        "time_window"
+      ]
+    },
+    "params": []
   },
   "POST /api/v1/history/read": {
     "body": {
@@ -195,6 +273,35 @@
         "phone",
         "pin",
         "staff"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/reports/delivery/request": {
+    "body": {
+      "properties": [
+        "phone",
+        "report_number"
+      ],
+      "required": [
+        "phone",
+        "report_number"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/reports/otp/verify": {
+    "body": {
+      "properties": [
+        "otp_code",
+        "phone",
+        "report_number",
+        "simulate_delivery_failure"
+      ],
+      "required": [
+        "otp_code",
+        "phone",
+        "report_number"
       ]
     },
     "params": []

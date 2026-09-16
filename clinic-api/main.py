@@ -37,6 +37,7 @@ didn't happen, and never defaults to acting just because a check was
 inconclusive.
 ======================================================================
 """
+
 from __future__ import annotations
 
 import logging
@@ -53,25 +54,40 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import match_band
+
 # ADDED BY CHAKRAVARDHAN -- "History disclosed only after verification",
 # "Preparation reminders" and related stories, below.
 import history_service
 import message_templates as mt
 import notifications as notify
 import notify_service
+
 # PREPARATION REMINDERS -- Author: Chakravardhan. Imported before startup so
 # its tables are registered on models.Base when create_all() runs.
 import reminder_service
 import verification as verify
 from db import get_db, SessionLocal
 from models import (
-    APPT_BOOKED, APPT_CANCELLED, APPT_RESCHEDULED, SLOT_LOCK_ACTIVE,
-    Department, Doctor, DoctorSchedule, LabTest, Appointment, NotificationAttempt,
+    APPT_BOOKED,
+    APPT_CANCELLED,
+    APPT_RESCHEDULED,
+    SLOT_LOCK_ACTIVE,
+    Department,
+    Doctor,
+    DoctorSchedule,
+    LabTest,
+    Appointment,
+    NotificationAttempt,
     # SOURAV: needed for the report-status/delivery/OTP endpoints below.
-    Patient, LabReport, ReportOTP, ReportDelivery,
+    Patient,
+    LabReport,
+    ReportOTP,
+    ReportDelivery,
     # ADDED BY SOURAV -- "Caller asks about a health package" and "Caller
     # asks opening hours, address or directions" stories, below.
-    ClinicInfo, HealthPackage, HealthPackageTest,
+    ClinicInfo,
+    HealthPackage,
+    HealthPackageTest,
     # ADDED BY SOURAV -- "otp will not be hardcoded" -- the single shared
     # random-OTP generator every ReportOTP row now goes through (see
     # models.py's own comment on generate_otp_code() for why this lives
@@ -80,13 +96,17 @@ from models import (
     # ADDED BY SOURAV -- Phase 1: Database Schema & Policy Tables. Walk-in
     # Eligibility / Prescription Requirements / Insurance Coverage Policy /
     # Outstanding Balance stories, below.
-    InsuranceProvider, InsurancePolicy, PatientBilling,
+    InsuranceProvider,
+    InsurancePolicy,
+    PatientBilling,
     # ADDED BY SOURAV -- "Caller asks to be called back" story, below.
     CallbackRequest,
     # ADDED BY CHAKRAVARDHAN -- patient identity/verification and history
     # disclosure audit trail, below.
-    TestRecord, DisclosureAudit,
+    TestRecord,
+    DisclosureAudit,
 )
+
 # ADDED BY SOURAV -- "otp will not be hardcoded": how the freshly
 # generated code actually reaches the patient is a separate, pluggable
 # concern -- see this module's own docstring on the file below.
@@ -112,6 +132,7 @@ def _ensure_seeded():
     """
     from db import engine
     from models import Base, LabTest
+
     Base.metadata.create_all(engine)
     _check_appointment_schema()
     db = SessionLocal()
@@ -119,6 +140,7 @@ def _ensure_seeded():
         if db.query(LabTest).count() == 0:
             logging.getLogger("clinic-api").info("empty database -- seeding catalogue")
             from seed import seed
+
             seed()
         else:
             logging.getLogger("clinic-api").info("catalogue already present, not reseeding")
@@ -174,7 +196,7 @@ def _check_appointment_schema() -> None:
             _SCHEMA_WARNING = None
             return
         columns = {c["name"] for c in insp.get_columns("appointments")}
-    except Exception as e:                                # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         logging.getLogger("clinic-api").warning("could not inspect schema: %s", e)
         _SCHEMA_WARNING = None
         return
@@ -242,9 +264,12 @@ def _first_alias_bn(aliases_bn: str) -> str | None:
 
 def _test_reply_dict(t: LabTest) -> dict:
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "rate_inr": t.rate_inr,
-        "sample_type": t.sample_type, "report_time_hours": t.report_time_hours,
+        "sample_type": t.sample_type,
+        "report_time_hours": t.report_time_hours,
     }
 
 
@@ -296,8 +321,7 @@ def _ambiguous_reply(query: str, rows) -> dict:
     the one metric the preceding story built to tell an empty catalogue from
     a working one.
     """
-    return {"found": False, "ambiguous": True, "query": query,
-            "candidates": _candidate_dicts(rows)}
+    return {"found": False, "ambiguous": True, "query": query, "candidates": _candidate_dicts(rows)}
 
 
 @app.get("/api/v1/catalogue")
@@ -312,14 +336,15 @@ def catalogue(db: Session = Depends(get_db)):
     """
     return {
         "tests": [
-            {"name": t.name,
-             "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a]}
+            {"name": t.name, "aliases_bn": [a for a in (t.aliases_bn or "").split("|") if a]}
             for t in db.query(LabTest).all()
         ],
         "doctors": [
-            {"name": d.name,
-             "surname": d.name.split()[-1],
-             "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a]}
+            {
+                "name": d.name,
+                "surname": d.name.split()[-1],
+                "aliases_bn": [a for a in (d.aliases_bn or "").split("|") if a],
+            }
             for d in db.query(Doctor).all()
         ],
     }
@@ -397,8 +422,7 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
     # is second place close? -- is asked on every path. A substring hit is a
     # high score rather than an early return.
     all_tests = db.query(LabTest).all()
-    verdict, candidates = match_band.decide(
-        match_band.rank(name, [(t, _forms(t)) for t in all_tests]))
+    verdict, candidates = match_band.decide(match_band.rank(name, [(t, _forms(t)) for t in all_tests]))
 
     if verdict == match_band.COMMIT:
         return _test_reply_dict(candidates[0].key)
@@ -429,6 +453,7 @@ def search_test(name: str = Query(...), db: Session = Depends(get_db)):
 # returns once the row is found.
 # =============================================================================
 
+
 def _test_preparation_reply_dict(t: LabTest) -> dict:
     """`advisory_available=False` is a real, honest, DIFFERENT outcome
     from `found=False` (test_preparation()'s own not-found branch below):
@@ -441,11 +466,15 @@ def _test_preparation_reply_dict(t: LabTest) -> dict:
     with no advisory row would be fabricating a medical instruction."""
     if t.fasting_required is None:
         return {
-            "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+            "found": True,
+            "test_name": t.name,
+            "test_name_bn": _first_alias_bn(t.aliases_bn),
             "advisory_available": False,
         }
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "advisory_available": True,
         "fasting_required": t.fasting_required,
         "fasting_hours": t.fasting_hours,
@@ -478,6 +507,7 @@ def test_preparation(name: str = Query(...), db: Session = Depends(get_db)):
 # just above -- only what gets returned once the row is found differs.
 # =============================================================================
 
+
 def _walkin_policy_reply_dict(t: LabTest) -> dict:
     """`policy_available=False` is a real, honest, DIFFERENT outcome from
     `found=False` below -- same "found vs. has-real-content" split as
@@ -487,11 +517,15 @@ def _walkin_policy_reply_dict(t: LabTest) -> dict:
     guess "walk-ins welcome" for a test with no reviewed answer."""
     if t.walkin_eligible is None:
         return {
-            "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+            "found": True,
+            "test_name": t.name,
+            "test_name_bn": _first_alias_bn(t.aliases_bn),
             "policy_available": False,
         }
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "policy_available": True,
         "walkin_eligible": t.walkin_eligible,
         "walkin_hours": t.walkin_hours,
@@ -515,10 +549,13 @@ def test_walkin_policy(name: str = Query(...), db: Session = Depends(get_db)):
 # split as walkin-policy just above.
 # =============================================================================
 
+
 def _prescription_policy_reply_dict(t: LabTest) -> dict:
     if t.prescription_required is None:
         return {
-            "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+            "found": True,
+            "test_name": t.name,
+            "test_name_bn": _first_alias_bn(t.aliases_bn),
             "policy_available": False,
         }
     # prescription_channels is stored "|"-joined (same convention as
@@ -526,7 +563,9 @@ def _prescription_policy_reply_dict(t: LabTest) -> dict:
     # layer here, same as aliases_bn is split wherever it's read.
     channels = [c for c in (t.prescription_channels or "").split("|") if c]
     return {
-        "found": True, "test_name": t.name, "test_name_bn": _first_alias_bn(t.aliases_bn),
+        "found": True,
+        "test_name": t.name,
+        "test_name_bn": _first_alias_bn(t.aliases_bn),
         "policy_available": True,
         "prescription_required": t.prescription_required,
         "prescription_channels": channels,
@@ -552,14 +591,15 @@ def test_prescription_policy(name: str = Query(...), db: Session = Depends(get_d
 # InsuranceProvider.aliases instead of LabTest.aliases_bn).
 # =============================================================================
 
+
 def _find_insurance_provider(db: Session, name: str) -> InsuranceProvider | None:
     """Same two-stage ladder as _find_lab_test() above: substring match on
     the canonical name first, then a "|"-joined alias match -- covers a
     caller naming their insurer in English, Hinglish/Banglish, or Bengali
     script, the same way LabTest.aliases_bn covers a test name."""
-    exact = db.query(InsuranceProvider).filter(
-        func.lower(InsuranceProvider.name).contains(name.lower())
-    ).first()
+    exact = (
+        db.query(InsuranceProvider).filter(func.lower(InsuranceProvider.name).contains(name.lower())).first()
+    )
     if exact:
         return exact
     for p in db.query(InsuranceProvider).all():
@@ -570,8 +610,9 @@ def _find_insurance_provider(db: Session, name: str) -> InsuranceProvider | None
 
 
 @app.get("/api/v1/insurance/coverage")
-def insurance_coverage(test_name: str = Query(...), provider_name: str = Query(...),
-                        db: Session = Depends(get_db)):
+def insurance_coverage(
+    test_name: str = Query(...), provider_name: str = Query(...), db: Session = Depends(get_db)
+):
     t = _find_lab_test(db, test_name)
     if not t:
         suggestions = _lab_test_fuzzy_suggestions(db, test_name)
@@ -582,7 +623,9 @@ def insurance_coverage(test_name: str = Query(...), provider_name: str = Query(.
         # Honest "we don't recognise that insurer", never silently
         # matched to the wrong one and never assumed "not covered".
         return {
-            "test_found": True, "test_name": t.name, "provider_found": False,
+            "test_found": True,
+            "test_name": t.name,
+            "provider_found": False,
             "query_provider": provider_name,
         }
 
@@ -592,13 +635,17 @@ def insurance_coverage(test_name: str = Query(...), provider_name: str = Query(.
         # never a guessed COVERED/NOT_COVERED (see models.py's own
         # comment on InsurancePolicy.coverage_status).
         return {
-            "test_found": True, "test_name": t.name,
-            "provider_found": True, "provider_name": provider.name,
+            "test_found": True,
+            "test_name": t.name,
+            "provider_found": True,
+            "provider_name": provider.name,
             "policy_available": False,
         }
     return {
-        "test_found": True, "test_name": t.name,
-        "provider_found": True, "provider_name": provider.name,
+        "test_found": True,
+        "test_name": t.name,
+        "provider_found": True,
+        "provider_name": provider.name,
         "policy_available": True,
         "coverage_status": policy.coverage_status,
         "pre_auth_required": policy.pre_auth_required,
@@ -680,7 +727,8 @@ def _resolve_department(db: Session, department_name: str) -> tuple[str, Departm
     """-> (verdict, the one department if committing, the rows to offer)."""
     all_departments = db.query(Department).all()
     verdict, candidates = match_band.decide(
-        match_band.rank(department_name, [(d, _forms(d)) for d in all_departments]))
+        match_band.rank(department_name, [(d, _forms(d)) for d in all_departments])
+    )
     if verdict == match_band.COMMIT:
         return verdict, candidates[0].key, []
     return verdict, None, [c.key for c in candidates]
@@ -690,8 +738,9 @@ def _schedule_for_weekday(db: Session, doctor_id: int, weekday: int) -> DoctorSc
     return db.query(DoctorSchedule).filter_by(doctor_id=doctor_id, weekday=weekday).first()
 
 
-def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date,
-                          horizon_days: int = 14) -> str | None:
+def _next_available_date(
+    db: Session, doctor_id: int, from_date: datetime.date, horizon_days: int = 14
+) -> str | None:
     for offset in range(horizon_days):
         d = from_date + datetime.timedelta(days=offset)
         if _schedule_for_weekday(db, doctor_id, d.weekday()):
@@ -700,8 +749,9 @@ def _next_available_date(db: Session, doctor_id: int, from_date: datetime.date,
 
 
 @app.get("/api/v1/doctors/availability")
-def doctor_availability(name: str = Query(...), date: str | None = Query(None),
-                         db: Session = Depends(get_db)):
+def doctor_availability(
+    name: str = Query(...), date: str | None = Query(None), db: Session = Depends(get_db)
+):
     verdict, doctor, offered = _resolve_doctor(db, name)
     if verdict == match_band.AMBIGUOUS:
         return _ambiguous_reply(name, offered)
@@ -718,31 +768,45 @@ def doctor_availability(name: str = Query(...), date: str | None = Query(None),
         sched = _schedule_for_weekday(db, doctor.id, target.weekday())
         if sched:
             return {
-                "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": target.isoformat(),
-                "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
+                "found": True,
+                "doctor_name": doctor.name,
+                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+                "date": target.isoformat(),
+                "available": True,
+                "chamber_hours": f"{sched.start_time}-{sched.end_time}",
                 "next_available_date": None,
             }
         next_date = _next_available_date(db, doctor.id, target + datetime.timedelta(days=1))
         return {
-            "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": target.isoformat(),
-            "available": False, "chamber_hours": None, "next_available_date": next_date,
+            "found": True,
+            "doctor_name": doctor.name,
+            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+            "date": target.isoformat(),
+            "available": False,
+            "chamber_hours": None,
+            "next_available_date": next_date,
         }
 
     # No date given -> "when is this doctor next available"
     next_date = _next_available_date(db, doctor.id, today)
     if not next_date:
         return {
-            "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": None,
-            "available": False, "chamber_hours": None, "next_available_date": None,
+            "found": True,
+            "doctor_name": doctor.name,
+            "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+            "date": None,
+            "available": False,
+            "chamber_hours": None,
+            "next_available_date": None,
         }
     sched = _schedule_for_weekday(db, doctor.id, datetime.date.fromisoformat(next_date).weekday())
     return {
-        "found": True, "doctor_name": doctor.name,
-                "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": next_date,
-        "available": True, "chamber_hours": f"{sched.start_time}-{sched.end_time}",
+        "found": True,
+        "doctor_name": doctor.name,
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "date": next_date,
+        "available": True,
+        "chamber_hours": f"{sched.start_time}-{sched.end_time}",
         "next_available_date": None,
     }
 
@@ -772,30 +836,38 @@ def doctor_schedule(name: str = Query(...), db: Session = Depends(get_db)):
       chamber days configured at all): "schedule": [] -- the caller-facing
       reply function must say so plainly rather than fabricating a day.
     """
-    doctor = _find_doctor(db, name)
+    # FIXED -- this called _find_doctor(db, name), which is never defined
+    # anywhere in this module and would raise NameError on any real call.
+    # See book_appointment()'s comment further down, which already
+    # documented this as a latent bug inherited from dev_chakravardhan's
+    # branch. Switched to _resolve_doctor(), the same ambiguity-aware
+    # lookup doctor_availability() and book_appointment() already use, so
+    # a name matching more than one doctor is offered as candidates
+    # rather than silently resolving to whichever query happened to
+    # return first.
+    verdict, doctor, offered = _resolve_doctor(db, name)
+    if verdict == match_band.AMBIGUOUS:
+        return _ambiguous_reply(name, offered)
     if not doctor:
         return {"found": False, "query": name}
 
     rows = (
-        db.query(DoctorSchedule)
-        .filter_by(doctor_id=doctor.id)
-        .order_by(DoctorSchedule.weekday.asc())
-        .all()
+        db.query(DoctorSchedule).filter_by(doctor_id=doctor.id).order_by(DoctorSchedule.weekday.asc()).all()
     )
     return {
         "found": True,
         "doctor_name": doctor.name,
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
         "schedule": [
-            {"weekday": r.weekday, "start_time": r.start_time, "end_time": r.end_time}
-            for r in rows
+            {"weekday": r.weekday, "start_time": r.start_time, "end_time": r.end_time} for r in rows
         ],
     }
 
 
 @app.get("/api/v1/doctors/by-department")
-def doctors_by_department(department: str = Query(...), date: str | None = Query(None),
-                           db: Session = Depends(get_db)):
+def doctors_by_department(
+    department: str = Query(...), date: str | None = Query(None), db: Session = Depends(get_db)
+):
     """Get all doctors in a department, supports short forms like 'ortho' for
     Orthopaedics.
 
@@ -890,14 +962,20 @@ def _live_slots(db: Session, doctor_id: int, date: str) -> set[str]:
     only for the callers unlucky enough to want that slot.
     """
     return {
-        a.time_slot for a in db.query(Appointment).filter_by(
-            doctor_id=doctor_id, date=date, slot_lock=SLOT_LOCK_ACTIVE,
-        ).all()
+        a.time_slot
+        for a in db.query(Appointment)
+        .filter_by(
+            doctor_id=doctor_id,
+            date=date,
+            slot_lock=SLOT_LOCK_ACTIVE,
+        )
+        .all()
     }
 
 
-def _prepare_notification(db: Session, appt: Appointment, event: str,
-                          doctor_name: str) -> NotificationAttempt | None:
+def _prepare_notification(
+    db: Session, appt: Appointment, event: str, doctor_name: str
+) -> NotificationAttempt | None:
     """Stage the patient's written confirmation IN THE CALLER'S TRANSACTION.
 
     MUST be called BEFORE the commit that persists the appointment change,
@@ -921,17 +999,18 @@ def _prepare_notification(db: Session, appt: Appointment, event: str,
     """
     try:
         return notify_service.queue_message(db, appt, event, doctor_name)
-    except Exception:                                     # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logging.getLogger("clinic-api").exception(
-            "could not stage a %s notification for %s (patient %s on %s) -- "
-            "the appointment itself stands",
-            event, appt.confirmation_id, appt.patient_name, appt.phone,
+            "could not stage a %s notification for %s (patient %s on %s) -- the appointment itself stands",
+            event,
+            appt.confirmation_id,
+            appt.patient_name,
+            appt.phone,
         )
         return None
 
 
-def _schedule_delivery(background: BackgroundTasks,
-                       attempt: NotificationAttempt | None, event: str) -> dict:
+def _schedule_delivery(background: BackgroundTasks, attempt: NotificationAttempt | None, event: str) -> dict:
     """Hand a committed ledger row to the background sender, and describe it
     for the response.
 
@@ -954,8 +1033,7 @@ def _schedule_delivery(background: BackgroundTasks,
 
 
 @app.post("/api/v1/appointments")
-def book_appointment(req: BookingRequest, background: BackgroundTasks,
-                     db: Session = Depends(get_db)):
+def book_appointment(req: BookingRequest, background: BackgroundTasks, db: Session = Depends(get_db)):
     # story title: Near matches are offered rather than guessed or refused
     # user story: As a caller naming something loosely, I want the close matches
     #   offered, so that I am not told my test does not exist when it does.
@@ -973,13 +1051,13 @@ def book_appointment(req: BookingRequest, background: BackgroundTasks,
     # ADDED BY CHAKRAVARDHAN -- `background: BackgroundTasks` (needed below,
     # unconflicted, by _schedule_delivery()) merged onto Sourav's doctor
     # ambiguity resolution rather than dev_chakravardhan's simpler
-    # _find_doctor(), which is never defined anywhere in this module (it
-    # would raise NameError) -- see the docstring note on doctor_schedule()
-    # a few functions above, which has the same latent, pre-existing call.
+    # _find_doctor(), which was never defined anywhere in this module (it
+    # would raise NameError). doctor_schedule() a few functions above had
+    # the same latent call and has since been fixed to use _resolve_doctor()
+    # too -- see the FIXED comment on its own body.
     verdict, doctor, offered = _resolve_doctor(db, req.doctor_name)
     if verdict == match_band.AMBIGUOUS:
-        return {"success": False, "reason": "doctor_ambiguous",
-                "candidates": _candidate_dicts(offered)}
+        return {"success": False, "reason": "doctor_ambiguous", "candidates": _candidate_dicts(offered)}
     if not doctor:
         return {"success": False, "reason": "doctor_not_found"}
 
@@ -1009,10 +1087,15 @@ def book_appointment(req: BookingRequest, background: BackgroundTasks,
 
     confirmation_id = f"KCD-{req.date.replace('-', '')}-{uuid.uuid4().hex[:4].upper()}"
     appt = Appointment(
-        confirmation_id=confirmation_id, doctor_id=doctor.id, date=req.date,
-        time_slot=req.time_slot, patient_name=req.patient_name, phone=req.phone,
+        confirmation_id=confirmation_id,
+        doctor_id=doctor.id,
+        date=req.date,
+        time_slot=req.time_slot,
+        patient_name=req.patient_name,
+        phone=req.phone,
         created_at=datetime.datetime.now(),
-        status=APPT_BOOKED, slot_lock=SLOT_LOCK_ACTIVE,
+        status=APPT_BOOKED,
+        slot_lock=SLOT_LOCK_ACTIVE,
     )
 
     # Staged BEFORE the commit below, deliberately, so one transaction
@@ -1045,10 +1128,11 @@ def book_appointment(req: BookingRequest, background: BackgroundTasks,
         if req.time_slot in _live_slots(db, doctor.id, req.date):
             logging.getLogger("clinic-api").info(
                 "slot %s on %s for doctor %s lost a booking race -- offering alternatives",
-                req.time_slot, req.date, doctor.name,
+                req.time_slot,
+                req.date,
+                doctor.name,
             )
-            return {"success": False, "reason": "slot_taken",
-                    "alternative_slots": _free_slots()}
+            return {"success": False, "reason": "slot_taken", "alternative_slots": _free_slots()}
 
         # The slot is still free, so the collision was on the only other
         # unique column, confirmation_id -- a 16^4 UUID-suffix clash. Do not
@@ -1057,7 +1141,9 @@ def book_appointment(req: BookingRequest, background: BackgroundTasks,
         # unrecognised reason as its generic "couldn't book" message.
         logging.getLogger("clinic-api").warning(
             "unexpected IntegrityError booking %s on %s (slot still free) -- "
-            "likely confirmation_id collision", req.time_slot, req.date,
+            "likely confirmation_id collision",
+            req.time_slot,
+            req.date,
         )
         return {"success": False, "reason": "booking_failed"}
 
@@ -1065,9 +1151,12 @@ def book_appointment(req: BookingRequest, background: BackgroundTasks,
     notification = _schedule_delivery(background, attempt, mt.EVENT_BOOKED)
 
     return {
-        "success": True, "confirmation_id": confirmation_id,
+        "success": True,
+        "confirmation_id": confirmation_id,
         "doctor_name": doctor.name,
-        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn), "date": req.date, "time_slot": req.time_slot,
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "date": req.date,
+        "time_slot": req.time_slot,
         # What the patient is owed in writing, so reply_templates.py can
         # decide whether to promise them a message. `queued` at this point
         # is the normal case -- the send has not been attempted yet.
@@ -1145,8 +1234,9 @@ def _report_summary(report: LabReport, test_name: str) -> dict:
 
 
 @app.get("/api/v1/reports/status")
-def report_status(phone: str = Query(...), test_name: str | None = Query(None),
-                   db: Session = Depends(get_db)):
+def report_status(
+    phone: str = Query(...), test_name: str | None = Query(None), db: Session = Depends(get_db)
+):
     """RULE 1 (never invent a report), RULE 13 (multiple reports require
     clarification), RULE 14 (same-name patients must not be merged).
 
@@ -1186,12 +1276,18 @@ def report_status(phone: str = Query(...), test_name: str | None = Query(None),
     if len(matches) > 1:
         # RULE 13: multiple candidates -> ask, never guess.
         return {
-            "patient_found": True, "found": False, "reason": "AMBIGUOUS",
+            "patient_found": True,
+            "found": False,
+            "reason": "AMBIGUOUS",
             "candidates": [_report_summary(r, tests_by_id[r.lab_test_id].name) for r in matches],
         }
 
     report = matches[0]
-    return {"patient_found": True, "found": True, **_report_summary(report, tests_by_id[report.lab_test_id].name)}
+    return {
+        "patient_found": True,
+        "found": True,
+        **_report_summary(report, tests_by_id[report.lab_test_id].name),
+    }
 
 
 def _blocking_reason_for(report: LabReport) -> str | None:
@@ -1314,11 +1410,13 @@ def request_report_delivery(req: DeliveryRequest, db: Session = Depends(get_db))
     except Exception as e:
         logging.getLogger("clinic-api").error(
             "send_otp_via_provider() raised unexpectedly for report %s: %s",
-            report.report_number, e,
+            report.report_number,
+            e,
         )
 
     return {
-        "success": True, "reason": "OTP_REQUIRED",
+        "success": True,
+        "reason": "OTP_REQUIRED",
         "masked_phone": _mask_phone_last4(patient.phone),
     }
 
@@ -1413,11 +1511,16 @@ def verify_report_otp(req: OtpVerifyRequest, db: Session = Depends(get_db)):
         # RULE 17: OTP success must NOT be conflated with delivery
         # success -- the two are recorded and reported separately.
         delivery = ReportDelivery(
-            report_id=report.id, patient_id=patient.id,
+            report_id=report.id,
+            patient_id=patient.id,
             recipient=f"registered contact for {patient.phone}",
-            delivery_channel="EMAIL", verification_status="VERIFIED",
-            delivery_status="FAILED", created_at=now, verified_at=now,
-            failed_at=now, failure_reason="DELIVERY_PROVIDER_FAILURE",
+            delivery_channel="EMAIL",
+            verification_status="VERIFIED",
+            delivery_status="FAILED",
+            created_at=now,
+            verified_at=now,
+            failed_at=now,
+            failure_reason="DELIVERY_PROVIDER_FAILURE",
             audit_note="OTP verified successfully; delivery provider failed on send.",
         )
         db.add(delivery)
@@ -1427,19 +1530,25 @@ def verify_report_otp(req: OtpVerifyRequest, db: Session = Depends(get_db)):
     token = secrets.token_urlsafe(16)
     expires_at = now + datetime.timedelta(minutes=SIGNED_LINK_VALIDITY_MINUTES)
     delivery = ReportDelivery(
-        report_id=report.id, patient_id=patient.id,
+        report_id=report.id,
+        patient_id=patient.id,
         recipient=f"registered contact for {patient.phone}",
-        delivery_channel="EMAIL", verification_status="VERIFIED",
-        delivery_status="SENT", signed_link_token=token,
-        signed_link_expires_at=expires_at, created_at=now,
-        verified_at=now, sent_at=now,
+        delivery_channel="EMAIL",
+        verification_status="VERIFIED",
+        delivery_status="SENT",
+        signed_link_token=token,
+        signed_link_expires_at=expires_at,
+        created_at=now,
+        verified_at=now,
+        sent_at=now,
         audit_note="OTP verified; report delivered successfully.",
     )
     db.add(delivery)
     db.commit()
 
     return {
-        "success": True, "reason": "DELIVERY_SENT",
+        "success": True,
+        "reason": "DELIVERY_SENT",
         "masked_phone": _mask_phone_last4(patient.phone),
         "signed_link_expires_minutes": SIGNED_LINK_VALIDITY_MINUTES,
     }
@@ -1487,6 +1596,7 @@ def validate_report_link(token: str, db: Session = Depends(get_db)):
 # decision).
 # =============================================================================
 
+
 @app.get("/api/v1/patient/billing")
 def patient_billing(phone: str = Query(...), db: Session = Depends(get_db)):
     patient = _find_patient_by_phone(db, phone)
@@ -1502,7 +1612,8 @@ def patient_billing(phone: str = Query(...), db: Session = Depends(get_db)):
         return {"patient_found": True, "found": False, "reason": "NOT_FOUND"}
 
     return {
-        "patient_found": True, "found": True,
+        "patient_found": True,
+        "found": True,
         "outstanding_amount": billing.outstanding_amount,
         "due_date": billing.due_date.isoformat() if billing.due_date else None,
     }
@@ -1525,7 +1636,13 @@ def patient_billing(phone: str = Query(...), db: Session = Depends(get_db)):
 # (0=Monday .. 6=Sunday) used throughout this file, so any future caller
 # of this endpoint can zip the two together without a re-mapping step.
 _CLINIC_WEEKDAYS = (
-    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
 )
 
 
@@ -1569,6 +1686,7 @@ def clinic_info(db: Session = Depends(get_db)):
 # own "ADDED BY SOURAV" comment in seed.py's HEALTH_PACKAGES list for that
 # half of this story.
 # =============================================================================
+
 
 def _package_tests(db: Session, pkg: HealthPackage) -> list[LabTest]:
     return (
@@ -1655,9 +1773,7 @@ def search_health_package(name: str = Query(...), db: Session = Depends(get_db))
         candidates.append(p.name)
         candidates.extend(a for a in (p.aliases or "").split("|") if a)
     suggestions = difflib.get_close_matches(name, candidates, n=3, cutoff=0.5)
-    alias_to_name = {
-        a: p.name for p in active_packages for a in (p.aliases or "").split("|") if a
-    }
+    alias_to_name = {a: p.name for p in active_packages for a in (p.aliases or "").split("|") if a}
     suggestions = list(dict.fromkeys(alias_to_name.get(s, s) for s in suggestions))
     return {"found": False, "query": name, "did_you_mean": suggestions}
 
@@ -1739,14 +1855,13 @@ class CancelRequest(BaseModel):
 
 
 def _find_live_appointment(db: Session, confirmation_id: str) -> Appointment | None:
-    return (db.query(Appointment)
-              .filter_by(confirmation_id=confirmation_id.strip().upper())
-              .first())
+    return db.query(Appointment).filter_by(confirmation_id=confirmation_id.strip().upper()).first()
 
 
 @app.post("/api/v1/appointments/{confirmation_id}/reschedule")
-def reschedule_appointment(confirmation_id: str, req: RescheduleRequest,
-                           background: BackgroundTasks, db: Session = Depends(get_db)):
+def reschedule_appointment(
+    confirmation_id: str, req: RescheduleRequest, background: BackgroundTasks, db: Session = Depends(get_db)
+):
     """Move an existing appointment, KEEPING its confirmation_id.
 
     The id is deliberately not reissued. The patient's whole complaint in
@@ -1808,26 +1923,38 @@ def reschedule_appointment(confirmation_id: str, req: RescheduleRequest,
         # took the target slot between the check above and this commit.
         db.rollback()
         logging.getLogger("clinic-api").info(
-            "reschedule of %s to %s %s lost a race", confirmation_id, req.date, req.time_slot,
+            "reschedule of %s to %s %s lost a race",
+            confirmation_id,
+            req.date,
+            req.time_slot,
         )
-        return {"success": False, "reason": "slot_taken",
-                "alternative_slots": [s for s in valid_slots
-                                      if s not in _live_slots(db, doctor.id, req.date)][:3]}
+        return {
+            "success": False,
+            "reason": "slot_taken",
+            "alternative_slots": [s for s in valid_slots if s not in _live_slots(db, doctor.id, req.date)][
+                :3
+            ],
+        }
 
     notification = _schedule_delivery(background, attempt, mt.EVENT_RESCHEDULED)
 
     return {
-        "success": True, "confirmation_id": appt.confirmation_id,
-        "doctor_name": doctor.name, "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
-        "date": appt.date, "time_slot": appt.time_slot,
-        "previous_date": previous["date"], "previous_time_slot": previous["time_slot"],
+        "success": True,
+        "confirmation_id": appt.confirmation_id,
+        "doctor_name": doctor.name,
+        "doctor_name_bn": _first_alias_bn(doctor.aliases_bn),
+        "date": appt.date,
+        "time_slot": appt.time_slot,
+        "previous_date": previous["date"],
+        "previous_time_slot": previous["time_slot"],
         "notification": notification,
     }
 
 
 @app.post("/api/v1/appointments/{confirmation_id}/cancel")
-def cancel_appointment(confirmation_id: str, req: CancelRequest,
-                       background: BackgroundTasks, db: Session = Depends(get_db)):
+def cancel_appointment(
+    confirmation_id: str, req: CancelRequest, background: BackgroundTasks, db: Session = Depends(get_db)
+):
     """Cancel an appointment, release its slot, and tell the patient.
 
     The row is kept, not deleted -- see the Appointment docstring for why,
@@ -1849,9 +1976,11 @@ def cancel_appointment(confirmation_id: str, req: CancelRequest,
 
     if appt.status == APPT_CANCELLED:
         return {
-            "success": True, "already_cancelled": True,
+            "success": True,
+            "already_cancelled": True,
             "confirmation_id": appt.confirmation_id,
-            "date": appt.date, "time_slot": appt.time_slot,
+            "date": appt.date,
+            "time_slot": appt.time_slot,
             "notification": {"status": "not_resent", "event": mt.EVENT_CANCELLED},
         }
 
@@ -1871,22 +2000,24 @@ def cancel_appointment(confirmation_id: str, req: CancelRequest,
         db.commit()
     except IntegrityError:
         db.rollback()
-        logging.getLogger("clinic-api").exception(
-            "cancelling %s hit an integrity error", confirmation_id)
+        logging.getLogger("clinic-api").exception("cancelling %s hit an integrity error", confirmation_id)
         return {"success": False, "reason": "cancel_failed"}
 
     if req.reason:
         logging.getLogger("clinic-api").info(
-            "appointment %s cancelled, reason given: %s", confirmation_id, req.reason[:200])
+            "appointment %s cancelled, reason given: %s", confirmation_id, req.reason[:200]
+        )
 
     notification = _schedule_delivery(background, attempt, mt.EVENT_CANCELLED)
 
     return {
-        "success": True, "already_cancelled": False,
+        "success": True,
+        "already_cancelled": False,
         "confirmation_id": appt.confirmation_id,
         "doctor_name": doctor_name,
         "doctor_name_bn": _first_alias_bn(doctor.aliases_bn) if doctor else None,
-        "date": appt.date, "time_slot": appt.time_slot,
+        "date": appt.date,
+        "time_slot": appt.time_slot,
         "notification": notification,
     }
 
@@ -1903,6 +2034,7 @@ class DeliveryReceipt(BaseModel):
     Field names follow the same tolerance as notifications._provider_id():
     gateways disagree, and either identifier is enough to find the row.
     """
+
     status: str
     provider_message_id: str | None = None
     message_id: str | None = None
@@ -1912,8 +2044,11 @@ class DeliveryReceipt(BaseModel):
 
 
 @app.post("/api/v1/notifications/receipt")
-def delivery_receipt(receipt: DeliveryReceipt, db: Session = Depends(get_db),
-                     x_gateway_token: str | None = Header(default=None)):
+def delivery_receipt(
+    receipt: DeliveryReceipt,
+    db: Session = Depends(get_db),
+    x_gateway_token: str | None = Header(default=None),
+):
     """The gateway's delivery-receipt callback.
 
     AUTHENTICATION IS CONDITIONAL, and the condition is deliberate: a
@@ -1932,7 +2067,8 @@ def delivery_receipt(receipt: DeliveryReceipt, db: Session = Depends(get_db),
     if config.configured:
         if not config.dlr_token:
             logging.getLogger("clinic-api").error(
-                "receipt rejected: gateway is configured but HOSPITAL_GATEWAY_DLR_TOKEN is not")
+                "receipt rejected: gateway is configured but HOSPITAL_GATEWAY_DLR_TOKEN is not"
+            )
             return {"accepted": False, "reason": "receipt_auth_not_configured"}
         if x_gateway_token != config.dlr_token:
             logging.getLogger("clinic-api").warning("receipt rejected: bad gateway token")
@@ -1949,7 +2085,8 @@ def delivery_receipt(receipt: DeliveryReceipt, db: Session = Depends(get_db),
     if attempt is None:
         logging.getLogger("clinic-api").warning(
             "delivery receipt matched no ledger row (provider id %r, client_ref %r)",
-            receipt.provider_message_id or receipt.message_id, receipt.client_ref,
+            receipt.provider_message_id or receipt.message_id,
+            receipt.client_ref,
         )
         return {"accepted": False, "reason": "unknown_message"}
 
@@ -1958,10 +2095,12 @@ def delivery_receipt(receipt: DeliveryReceipt, db: Session = Depends(get_db),
 
 
 @app.get("/api/v1/notifications/failures")
-def notification_failures(stale_minutes: int = Query(notify.DEFAULT_STALE_MINUTES, ge=1),
-                          include_acknowledged: bool = Query(False),
-                          include_skipped: bool = Query(False),
-                          db: Session = Depends(get_db)):
+def notification_failures(
+    stale_minutes: int = Query(notify.DEFAULT_STALE_MINUTES, ge=1),
+    include_acknowledged: bool = Query(False),
+    include_skipped: bool = Query(False),
+    db: Session = Depends(get_db),
+):
     """The staff queue: every patient still owed a written confirmation.
 
     This is what "surfaced to staff rather than silently dropped" means in
@@ -1971,12 +2110,16 @@ def notification_failures(stale_minutes: int = Query(notify.DEFAULT_STALE_MINUTE
     for the three conditions that put a row here.
     """
     rows = notify_service.open_failures(
-        db, stale_minutes=stale_minutes,
+        db,
+        stale_minutes=stale_minutes,
         include_acknowledged=include_acknowledged,
         include_skipped=include_skipped,
     )
-    return {"count": len(rows), "stale_minutes": stale_minutes,
-            "failures": [notify_service.as_dict(r) for r in rows]}
+    return {
+        "count": len(rows),
+        "stale_minutes": stale_minutes,
+        "failures": [notify_service.as_dict(r) for r in rows],
+    }
 
 
 @app.get("/api/v1/appointments/{confirmation_id}/notifications")
@@ -1987,12 +2130,17 @@ def appointment_notifications(confirmation_id: str, db: Session = Depends(get_db
     were told to expect a message. This answers whether one was sent, what
     it said, and whether the operator ever confirmed delivery.
     """
-    rows = (db.query(NotificationAttempt)
-              .filter_by(confirmation_id=confirmation_id.strip().upper())
-              .order_by(NotificationAttempt.created_at.desc()).all())
-    return {"confirmation_id": confirmation_id.strip().upper(),
-            "count": len(rows),
-            "notifications": [notify_service.as_dict(r) for r in rows]}
+    rows = (
+        db.query(NotificationAttempt)
+        .filter_by(confirmation_id=confirmation_id.strip().upper())
+        .order_by(NotificationAttempt.created_at.desc())
+        .all()
+    )
+    return {
+        "confirmation_id": confirmation_id.strip().upper(),
+        "count": len(rows),
+        "notifications": [notify_service.as_dict(r) for r in rows],
+    }
 
 
 class AcknowledgeRequest(BaseModel):
@@ -2000,8 +2148,7 @@ class AcknowledgeRequest(BaseModel):
 
 
 @app.post("/api/v1/notifications/{attempt_id}/acknowledge")
-def acknowledge_failure(attempt_id: int, req: AcknowledgeRequest,
-                        db: Session = Depends(get_db)):
+def acknowledge_failure(attempt_id: int, req: AcknowledgeRequest, db: Session = Depends(get_db)):
     """A member of staff takes a failure on -- they have phoned the patient,
     or handed them a printed slip. The row leaves the queue; its status
     stays whatever it actually was."""
@@ -2013,8 +2160,7 @@ def acknowledge_failure(attempt_id: int, req: AcknowledgeRequest,
 
 
 @app.post("/api/v1/notifications/{attempt_id}/retry")
-def retry_notification(attempt_id: int, background: BackgroundTasks,
-                       db: Session = Depends(get_db)):
+def retry_notification(attempt_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
     """Send a failed message again, from the stored body.
 
     Re-sends what was composed at the time, NOT a freshly rendered message
@@ -2093,7 +2239,11 @@ def history_verify(req: VerifyAnswerRequest, db: Session = Depends(get_db)):
     reasons differ; what the caller can distinguish must not.
     """
     decision, token = history_service.attempt(
-        db, phone=req.phone, factor=req.factor, answer=req.answer, call_id=req.call_id,
+        db,
+        phone=req.phone,
+        factor=req.factor,
+        answer=req.answer,
+        call_id=req.call_id,
     )
     return {
         "reply": decision.reply,
@@ -2134,8 +2284,7 @@ def history_refusal(req: RefusalRequest, db: Session = Depends(get_db)):
     clinic's side, and the likeliest support response would be to switch the
     check off.
     """
-    history_service.record_refusal(db, phone=req.phone, reason=req.reason,
-                                   call_id=req.call_id)
+    history_service.record_refusal(db, phone=req.phone, reason=req.reason, call_id=req.call_id)
     return {"recorded": True}
 
 
@@ -2156,15 +2305,14 @@ def set_patient_pin(req: SetPinRequest, db: Session = Depends(get_db)):
     """
     ok = history_service.set_pin(db, phone=req.phone, pin=req.pin)
     if ok:
-        logging.getLogger("clinic-api").info(
-            "PIN set for %s by staff %s", req.phone, req.staff[:60])
+        logging.getLogger("clinic-api").info("PIN set for %s by staff %s", req.phone, req.staff[:60])
     return {"success": ok}
 
 
 @app.get("/api/v1/history/audit")
-def history_audit(limit: int = Query(50, ge=1, le=500),
-                  outcome: str | None = Query(None),
-                  db: Session = Depends(get_db)):
+def history_audit(
+    limit: int = Query(50, ge=1, le=500), outcome: str | None = Query(None), db: Session = Depends(get_db)
+):
     """The audit trail, for staff.
 
     The failures are the interesting part: a run of them against one number
@@ -2175,10 +2323,19 @@ def history_audit(limit: int = Query(50, ge=1, le=500),
     if outcome:
         q = q.filter_by(outcome=outcome)
     rows = q.order_by(DisclosureAudit.created_at.desc()).limit(limit).all()
-    return {"count": len(rows), "audit": [
-        {"id": r.id, "phone": r.phone, "patient_id": r.patient_id,
-         "factor": r.factor, "outcome": r.outcome, "detail": r.detail,
-         "call_id": r.call_id,
-         "created_at": r.created_at.isoformat() if r.created_at else None}
-        for r in rows
-    ]}
+    return {
+        "count": len(rows),
+        "audit": [
+            {
+                "id": r.id,
+                "phone": r.phone,
+                "patient_id": r.patient_id,
+                "factor": r.factor,
+                "outcome": r.outcome,
+                "detail": r.detail,
+                "call_id": r.call_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }

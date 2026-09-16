@@ -73,6 +73,7 @@ having worked.
 the resync that follows release_gate discards everything captured during
 playback -- which during a barge-in is the interruption itself.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -101,6 +102,7 @@ from agent.turn_parts import ANSWERED, INTERACTIVE, UNANSWERABLE
 from agent import call_state as call_state_mod
 from agent import confidence, outcomes, speakability, tool_outcome, turn_log
 from agent.asr import TurnASR
+
 # ADDED BY SOURAV -- real production bug, reported directly by the
 # caller: "why voice is giving response only in bengali... when the user
 # asks in hindi aur hinglish or english." detect_language() already
@@ -112,12 +114,16 @@ from agent.asr import TurnASR
 # fixed in the function itself while wiring this in.
 from agent.bn_normalize import detect_language
 from agent.llm import extract_intent, ExtractionError
+
 # ADDED BY CHAKRAVARDHAN -- audio-quality conditioning, echo suppression,
 # the shared HTTP executor pool, patient verification/history disclosure,
 # reschedule/cancel notifications and per-caller language switching.
 from agent.audio_quality import condition_wav_file
 from agent.echo_guard import (
-    CONFIG as ECHO_CFG, EchoGuard, pcm_from_wav_bytes, suppress_echo,
+    CONFIG as ECHO_CFG,
+    EchoGuard,
+    pcm_from_wav_bytes,
+    suppress_echo,
 )
 from agent.executors import asr_gate, run_http, shutdown as _shutdown_http_pool
 from agent import language as lang_mod
@@ -126,46 +132,67 @@ from agent.i18n import t as _t
 from agent import privacy
 from agent.quality_metrics import ACTION_KEYPAD, METRICS, TurnFailureTracker
 from agent.reply_templates import (
-    missing_slot_prompt, test_rate_reply, sample_type_reply, test_duration_reply,
-    doctor_availability_reply, booking_reply,
-    booking_confirm_prompt, heard_confirm_prompt, doctors_by_department_reply,
-    booking_correction_prompt, INSUFFICIENT_VERIFIED_INFORMATION_BN,
-    date_range_confirm_prompt, UNSPEAKABLE_ESCALATION, with_change_notice,
-    near_match_prompt, NEAR_MATCH_UNCLEAR_BN,
-    DEFERRED_PART_BN, RESUMING_PART_BN, unanswered_part_prompt,
+    missing_slot_prompt,
+    test_rate_reply,
+    sample_type_reply,
+    test_duration_reply,
+    doctor_availability_reply,
+    booking_reply,
+    booking_confirm_prompt,
+    heard_confirm_prompt,
+    doctors_by_department_reply,
+    booking_correction_prompt,
+    INSUFFICIENT_VERIFIED_INFORMATION_BN,
+    date_range_confirm_prompt,
+    UNSPEAKABLE_ESCALATION,
+    with_change_notice,
+    near_match_prompt,
+    NEAR_MATCH_UNCLEAR_BN,
+    DEFERRED_PART_BN,
+    RESUMING_PART_BN,
+    unanswered_part_prompt,
     # ADDED BY SOURAV -- "Caller asks when a doctor sits" story.
-    doctor_schedule_reply, booking_confirmation_prompt,
+    doctor_schedule_reply,
+    booking_confirmation_prompt,
     # ADDED BY SOURAV -- "Lab Report Status & Secure Delivery" combined story.
     # delivery_declined_reply / otp_disclosure_refusal_reply are the two new
     # reply functions _dispatch_turn/_continue_pending speak directly
     # (every other new reply function is only ever reached indirectly,
     # through agent/report_flow.py's interpret_*() functions -- see that
     # module for why the decision logic itself lives there and not here).
-    delivery_declined_reply, otp_disclosure_refusal_reply,
+    delivery_declined_reply,
+    otp_disclosure_refusal_reply,
     # ADDED BY SOURAV -- "Caller asks about a health package" combined
     # with "Caller asks opening hours, address or directions".
-    health_package_reply, health_packages_list_reply, clinic_info_reply,
+    health_package_reply,
+    health_packages_list_reply,
+    clinic_info_reply,
     # ADDED BY SOURAV -- "Caller asks how to prepare for a test" story,
     # plus its bundled human_fallback config (see human_fallback_reply's
     # own module-level comment in agent/reply_templates.py for why that
     # part lives here rather than as an actual call transfer).
-    test_preparation_reply, human_fallback_reply,
+    test_preparation_reply,
+    human_fallback_reply,
     # ADDED BY SOURAV -- Phase 1: Database Schema & Policy Tables (Walk-in
     # Eligibility, Prescription Requirements, Insurance Coverage Policy,
     # Outstanding Balance / Billing stories).
-    walkin_eligibility_reply, prescription_requirements_reply,
-    insurance_coverage_reply, billing_balance_reply,
+    walkin_eligibility_reply,
+    prescription_requirements_reply,
+    insurance_coverage_reply,
+    billing_balance_reply,
     # ADDED BY SOURAV -- "Caller asks something the agent does not cover"
     # story. human_fallback_reply above is reused verbatim for the
     # "connect me to a human" branch -- these two are only the new
     # initial-offer and declined-offer replies.
-    out_of_scope_reply, out_of_scope_counter_reply,
+    out_of_scope_reply,
+    out_of_scope_counter_reply,
     # ADDED BY SOURAV -- "Caller asks two questions in one breath" story.
     # These three back _resolve_combinable_intent_fragment()'s three
     # non-fabricating fallback fragments below -- every OTHER fragment in
     # a combined reply reuses an existing single-question reply function
     # from this same import block verbatim.
-    multi_intent_missing_info_reply, multi_intent_out_of_scope_reply,
+    multi_intent_missing_info_reply,
+    multi_intent_out_of_scope_reply,
     multi_intent_needs_separate_flow_reply,
     # ADDED BY SOURAV -- "Caller asks the agent to compare two options"
     # story. Renders agent/compare_flow.py's build_comparison() output --
@@ -179,17 +206,28 @@ from agent.reply_templates import (
     # ADDED BY SOURAV -- "Caller asks to be called back" story. See
     # agent/callback_flow.py's module docstring and each function's own
     # docstring for when these are spoken.
-    callback_unavailable_reply, callback_confirmation_prompt, callback_scheduled_reply,
+    callback_unavailable_reply,
+    callback_confirmation_prompt,
+    callback_scheduled_reply,
     # ADDED BY CHAKRAVARDHAN -- payment/report-collection no-smartphone
     # flows, patient verification and history/bookings disclosure, and
     # per-caller language switching.
-    payment_reply, report_collection_reply,
-    counter_fallback, language_switch_reply, language_unavailable_reply,
-    verification_prompt, verification_failed_reply, verification_locked_reply,
-    disclosure_blocked_reply, history_reply,
-    bookings_reply, PURPOSE_BOOKINGS, PURPOSE_HISTORY,
+    payment_reply,
+    report_collection_reply,
+    counter_fallback,
+    language_switch_reply,
+    language_unavailable_reply,
+    verification_prompt,
+    verification_failed_reply,
+    verification_locked_reply,
+    disclosure_blocked_reply,
+    history_reply,
+    bookings_reply,
+    PURPOSE_BOOKINGS,
+    PURPOSE_HISTORY,
 )
 from agent.compare_flow import build_comparison
+
 # ADDED BY SOURAV -- "Caller asks a follow-up that depends on the previous
 # answer" story. Cross-turn entity memory (pronoun/elliptical follow-up
 # resolution) -- see agent/state.py's own module docstring for the full
@@ -197,6 +235,7 @@ from agent.compare_flow import build_comparison
 from agent.state import DialogueState, resolve_follow_up, primary_slot_for_intent, kind_for_slot
 from agent.fast_path import Catalogue, FastPath, COMMIT_MARGIN
 from agent.semantic_cache import SemanticCache, embed as _embed_probe
+
 # story title: The model never originates a fact
 # user story: As a clinical lead, I want every price, date and identifier
 #   to come from a verified system response, so that a wrong answer is a
@@ -209,14 +248,20 @@ from agent.semantic_cache import SemanticCache, embed as _embed_probe
 # resolve_date is the story's core: the model's date becomes a candidate
 # and slot_parse.py becomes the record. See its docstring.
 from agent.slot_parse import (
-    parse_date, parse_time, parse_phone, is_affirmative, is_negative,
+    parse_date,
+    parse_time,
+    parse_phone,
+    is_affirmative,
+    is_negative,
     parse_correction_field,
     # ADDED BY SOURAV -- report_status/report_send combined story: OTP entry
     # is parsed deterministically here, never sent to the LLM or the
     # semantic cache (see agent/slot_parse.py's parse_otp() docstring and
     # RULE 9 -- the OTP must never appear in an Ollama prompt or a cache key).
-    parse_otp, looks_like_otp_disclosure_request,
+    parse_otp,
+    looks_like_otp_disclosure_request,
 )
+
 # story title: The model never originates a fact
 # user story: As a clinical lead, I want every price, date and identifier to
 #   come from a verified system response, so that a wrong answer is a data bug
@@ -245,12 +290,14 @@ from agent.outcomes import (
     # docstring in agent/outcomes.py.
     missing_callback_write_fields,
 )
+
 # ADDED BY SOURAV -- "Caller asks to be called back" story. Pure
 # availability-check/context-building logic -- see that module's own
 # docstring for why "operating hours" means the clinic's own hours and why
 # nothing here reads os.environ or datetime directly.
 from agent.callback_flow import check_callback_availability, build_callback_reason
 from agent.callback_config import CALLBACKS_ENABLED
+
 # ADDED BY SOURAV -- new shared module holding the actual report-flow
 # DECISIONS as pure functions, so main.py and main_pcm.py both get
 # identical business logic for report_status/report_send without
@@ -259,22 +306,24 @@ from agent.callback_config import CALLBACKS_ENABLED
 # pre-existing test_sample drift this same story restores parity on, just
 # below).
 from agent.report_flow import (
-    interpret_report_status_result, interpret_delivery_request_result,
-    interpret_otp_verify_result, match_candidate_report,
+    interpret_report_status_result,
+    interpret_delivery_request_result,
+    interpret_otp_verify_result,
+    match_candidate_report,
 )
+
 # STORY [Answer Quality and Grounding]
 # As a patient, I want to hear the whole sentence, so that I am
 # not left guessing what the agent tried to say.
 from agent import tts as tts_mod
-# ADDED BY CHAKRAVARDHAN -- BUSY_LINE (the fixed clip played on _speak()'s
-# already-busy-line fallback path) merged onto Sourav's existing TTSClient
-# import rather than kept in dev_chakravardhan's separate, narrower import.
 from agent.tts import TTSClient, UnspeakableReply, SPEAKABILITY_ENFORCE, BUSY_LINE
 from agent.vad_stream import TurnDetector
 from agent import call_audit
 from agent import conversation_store
+
 # MIXED-LANGUAGE SPEECH -- Author: Chakravardhan. See agent/code_mix.py.
 from agent import code_mix
+
 # GREETING AND CLOSING -- Author: Chakravardhan. See agent/call_script.py.
 from agent import call_script
 
@@ -324,7 +373,7 @@ RESYNC_REWIND_S = 0.25
 # the PCM transport. On WebM it still works, but detection takes up to
 # POLL_INTERVAL_S. WebM is the legacy/bench client; PCM is what production
 # serves.
-TAIL_READ_IS_CHEAP = True   # raw PCM: reading the tail is a slice, not a decode
+TAIL_READ_IS_CHEAP = True  # raw PCM: reading the tail is a slice, not a decode
 
 # Which process a call record came from. main.py and main_pcm.py share one
 # audit database (agent/call_audit.py), and crash recovery at startup must
@@ -497,37 +546,40 @@ async def _load_fast_path() -> FastPath | None:
     Its own function so the message service (start_text_services) loads it
     exactly the way the phone line does -- one catalogue, one matcher.
 
+    # story title: A thing not existing is never confused with a system
+    #   being down
+    # user story: As a caller, I want to know whether my test does not
+    #   exist or the system cannot be reached, so that I know whether to
+    #   call back.
+    # acceptance criteria: The two produce different spoken sentences and
+    #   different metrics, and the distinction survives every refactor.
+    #   This behaviour exists today and gains a permanent regression case.
+    #
+    # An EMPTY catalogue used to log this same line with a 0 in it and
+    # carry on. It is not a quiet condition: the clinic API is up and
+    # answering, so nothing is "unreachable", and every single caller is
+    # about to be told in a well-formed sentence that their test does not
+    # exist. That is the confusion this story is named after, arriving from
+    # the data side rather than the code side.
+    #
+    # clinic-api's own /api/health reports these counts. Nobody was looking.
     # ADDED BY CHAKRAVARDHAN's merge: kept here (rather than only at the one
     # call site it originally guarded) since this function now backs BOTH
-    # the phone line's startup AND the text-message service, mirroring the
-    # same merge decision already made in main.py's _load_fast_path().
+    # the phone line's startup AND the text-message service, and an empty
+    # catalogue is exactly as confusing on either.
     """
     try:
         import httpx as _httpx
+
         async with _httpx.AsyncClient(timeout=10) as c:
             payload = (await c.get(f"{CLINIC_API_BASE}/api/v1/catalogue")).json()
         fast_path = FastPath(Catalogue(payload))
-        # story title: A thing not existing is never confused with a system
-        #   being down
-        # user story: As a caller, I want to know whether my test does not
-        #   exist or the system cannot be reached, so that I know whether to
-        #   call back.
-        # acceptance criteria: The two produce different spoken sentences and
-        #   different metrics, and the distinction survives every refactor.
-        #   This behaviour exists today and gains a permanent regression case.
-        #
-        # An EMPTY catalogue used to log this same line with a 0 in it and
-        # carry on. It is not a quiet condition: the clinic API is up and
-        # answering, so nothing is "unreachable", and every single caller is
-        # about to be told in a well-formed sentence that their test does not
-        # exist. That is the confusion this story is named after, arriving from
-        # the data side rather than the code side.
-        #
-        # clinic-api's own /api/health reports these counts. Nobody was looking.
         if not len(fast_path.catalogue):
-            logger.error("CLINIC CATALOGUE IS EMPTY -- the API is up and has no "
-                         "rows, so every caller will be told their test does not "
-                         "exist. Check the clinic database before taking calls.")
+            logger.error(
+                "CLINIC CATALOGUE IS EMPTY -- the API is up and has no "
+                "rows, so every caller will be told their test does not "
+                "exist. Check the clinic database before taking calls."
+            )
         else:
             logger.info("fast path ready over %d catalogue rows", len(fast_path.catalogue))
         return fast_path
@@ -546,11 +598,12 @@ async def _startup():
     _audit_store = call_audit.AuditStore()
     recovered = _audit_store.recover_unfinished(AUDIT_TRANSPORT)
     if recovered:
-        logger.warning("audit: finalised %d call record(s) a previous run left open",
-                       recovered)
+        logger.warning("audit: finalised %d call record(s) a previous run left open", recovered)
     if not os.environ.get("VOICE_AGENT_AUDIT_TOKEN"):
-        logger.warning("audit: VOICE_AGENT_AUDIT_TOKEN is unset -- /api/audit/* is "
-                       "readable without a token. Set it on any non-bench deployment.")
+        logger.warning(
+            "audit: VOICE_AGENT_AUDIT_TOKEN is unset -- /api/audit/* is "
+            "readable without a token. Set it on any non-bench deployment."
+        )
 
     logger.info("loading IndicConformer...")
     _asr = await asyncio.to_thread(TurnASR)
@@ -578,7 +631,10 @@ async def _startup():
     except Exception as e:  # noqa: BLE001 - cache is optional, the call is not
         logger.warning("embedding warmup failed, cache starts L1-only: %s", e)
 
-    # The catalogue behind the fast path -- see _load_fast_path().
+    # The catalogue behind the fast path -- see _load_fast_path(), which now
+    # carries the empty-catalogue check (story: "A thing not existing is
+    # never confused with a system being down") that used to live only
+    # here, since this same function also backs the text-message service.
     _fast_path = await _load_fast_path()
 
     # STORY [Answer Quality and Grounding]
@@ -600,8 +656,7 @@ async def _startup():
     # every closing sentence, in every language this pod serves, so neither
     # costs synthesis latency on a live call.
     await call_script.prewarm(_tts)
-    logger.info("startup complete -- ready for calls (speakability enforce=%s)",
-                SPEAKABILITY_ENFORCE)
+    logger.info("startup complete -- ready for calls (speakability enforce=%s)", SPEAKABILITY_ENFORCE)
 
 
 @app.on_event("shutdown")
@@ -748,9 +803,11 @@ def _audit_read_denied(token: str | None):
 
 
 @app.get("/api/audit/calls")
-async def audit_calls(limit: int = Query(50, ge=1, le=500),
-                      status: str | None = Query(None),
-                      x_audit_token: str | None = Header(default=None)):
+async def audit_calls(
+    limit: int = Query(50, ge=1, le=500),
+    status: str | None = Query(None),
+    x_audit_token: str | None = Header(default=None),
+):
     """Most recent calls first, one row each. Filter by final_status to find
     the ones that went wrong: ?status=failed, ?status=error."""
     denied = _audit_read_denied(x_audit_token)
@@ -832,8 +889,9 @@ class CallSession:
         # dies in its first second still has a record. See agent/call_audit.py.
         # GREETING AND CLOSING -- Author: Chakravardhan. The ordinary CallAudit,
         # also remembering what the clinic API answered, for the closing.
-        self.audit = call_script.ObservedCallAudit(_audit_store, self.call_id,
-                                                   transport=AUDIT_TRANSPORT, language=self.lang)
+        self.audit = call_script.ObservedCallAudit(
+            _audit_store, self.call_id, transport=AUDIT_TRANSPORT, language=self.lang
+        )
         self.closing_spoken = False
         # Set by code that decides to END the call itself (the idle timeout).
         # ws_audio falls back to what it observed when this is None.
@@ -993,8 +1051,7 @@ class CallSession:
         # one turn in the call where subtracting our own audio is both
         # possible and worth doing.
         now_s = self.call_time_s()
-        self._pending_echo_ref = self.echo.reference.slice(
-            now_s - ECHO_CFG.barge_in_window_s, now_s)
+        self._pending_echo_ref = self.echo.reference.slice(now_s - ECHO_CFG.barge_in_window_s, now_s)
 
         # Playback is about to be STOPPED, so the rest of this reply will
         # never leave the speaker. Forget it, or the level test keeps judging
@@ -1050,6 +1107,7 @@ class CallSession:
 
     def cleanup(self):
         import shutil
+
         # The verification token dies with the call, deliberately. The
         # handset is shared -- the person who verified may hand the phone to
         # somebody else before the next call, and a token that outlived the
@@ -1066,8 +1124,9 @@ class CallSession:
 # STORY [Answer Quality and Grounding]
 # As a patient, I want to hear the whole sentence, so that I am
 # not left guessing what the agent tried to say.
-async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None = None,
-                 audit_redact: str | None = None):
+async def _speak(
+    session: CallSession, text_bn: str, fallback_reason: str | None = None, audit_redact: str | None = None
+):
     """Say one line to the caller, or say why it could not be said.
 
     SYNTHESIZE FIRST, THEN SEND THE TRANSCRIPT.
@@ -1106,9 +1165,9 @@ async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None
             # language, switchable mid-call -- see language_switch_reply()),
             # not session.call_state.language, which stays None until a
             # detector that does not exist yet sets it.
-            wav = await _tts.synthesize(text_bn,
-                                        speech_rate=session.call_state.speech_rate,
-                                        language=session.lang)
+            wav = await _tts.synthesize(
+                text_bn, speech_rate=session.call_state.speech_rate, language=session.lang
+            )
             audio = "synthesized" if wav else "none"
         # STORY [Answer Quality and Grounding]
         # As a patient, I want to hear the whole sentence, so that I am
@@ -1119,18 +1178,17 @@ async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None
             # clip, which is right when the vocoder is down and wrong here. This
             # is a defect on our side, not an outage, and the honest response is
             # to send the caller somewhere that can actually answer them.
-            logger.error("[%s] reply blocked, dropped=%s -- escalating to counter",
-                         session.call_id, list(e.dropped))
-            turn_log.record_unspeakable(session.call_id, session.utt_seq,
-                                        e.dropped, enforced=True)
+            logger.error(
+                "[%s] reply blocked, dropped=%s -- escalating to counter", session.call_id, list(e.dropped)
+            )
+            turn_log.record_unspeakable(session.call_id, session.utt_seq, e.dropped, enforced=True)
             text_bn = UNSPEAKABLE_ESCALATION
             try:
                 # Cannot recurse: this line is in PREWARM_LINES and startup asserts
                 # every one of them is speakable, so it can never be blocked itself.
                 # The broad catch is the belt to that braces -- if it somehow were,
                 # the caller still gets the pre-recorded clip rather than silence.
-                wav = await _tts.synthesize(text_bn,
-                                            speech_rate=session.call_state.speech_rate)
+                wav = await _tts.synthesize(text_bn, speech_rate=session.call_state.speech_rate)
                 audio = "synthesized" if wav else "none"
             except Exception:  # noqa: BLE001 - last resort, never raise past here
                 logger.exception("[%s] escalation line failed to synthesize", session.call_id)
@@ -1156,8 +1214,9 @@ async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None
             # SPEAKABILITY_ENFORCE becomes the default.
             _verdict = speakability.check(text_bn, language=session.lang)
             if _verdict.is_blocked:
-                turn_log.record_unspeakable(session.call_id, session.utt_seq,
-                                            _verdict.dropped, enforced=False)
+                turn_log.record_unspeakable(
+                    session.call_id, session.utt_seq, _verdict.dropped, enforced=False
+                )
 
         await session.send_json("AI", text_bn)
 
@@ -1173,8 +1232,9 @@ async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None
         # reference earlier than the sound it describes, so the lookup during the
         # real playback returns silence, "no_reference" fires, and our own echo
         # is read as the caller interrupting.
-        session.echo.note_playback(session.playback_start_s(),
-                                   pcm_from_wav_bytes(wav, session.echo.sample_rate))
+        session.echo.note_playback(
+            session.playback_start_s(), pcm_from_wav_bytes(wav, session.echo.sample_rate)
+        )
 
         # Close the gate BEFORE the bytes leave, never after: the client can
         # start playing the moment they land, and a poll tick that slips in
@@ -1184,12 +1244,17 @@ async def _speak(session: CallSession, text_bn: str, fallback_reason: str | None
         delivered = True
     finally:
         _audit(session).agent_response(
-            text_bn, lang=getattr(session, "lang", None), audio=audio, delivered=delivered,
-            fallback_reason=fallback_reason, tts_error=tts_error, redact=audit_redact)
+            text_bn,
+            lang=getattr(session, "lang", None),
+            audio=audio,
+            delivered=delivered,
+            fallback_reason=fallback_reason,
+            tts_error=tts_error,
+            redact=audit_redact,
+        )
 
 
-async def _deliver_written(session, text: str, fallback_reason: str | None,
-                           audit_redact: str | None) -> None:
+async def _deliver_written(session, text: str, fallback_reason: str | None, audit_redact: str | None) -> None:
     """_speak for the message channel. Recorded exactly like a spoken reply
     -- in `finally`, whether or not it reached the patient -- with
     call_audit.AUDIO_TEXT saying it went out as words rather than audio."""
@@ -1198,8 +1263,13 @@ async def _deliver_written(session, text: str, fallback_reason: str | None,
         delivered = await session.deliver_text(text)
     finally:
         _audit(session).agent_response(
-            text, lang=getattr(session, "lang", None), audio=call_audit.AUDIO_TEXT,
-            delivered=delivered, fallback_reason=fallback_reason, redact=audit_redact)
+            text,
+            lang=getattr(session, "lang", None),
+            audio=call_audit.AUDIO_TEXT,
+            delivered=delivered,
+            fallback_reason=fallback_reason,
+            redact=audit_redact,
+        )
 
 
 # story title: The same question gets the same answer within one call
@@ -1233,8 +1303,9 @@ async def _deliver_written(session, text: str, fallback_reason: str | None,
 #   the agent offers up to three by name and asks which. Candidates are
 #   generated across every supported language and romanised spelling. The
 #   did-you-mean path covers the ambiguous case and not only total failure.
-async def _offer_near_matches(session: CallSession, intent: str, result: dict,
-                              offered_date: str | None) -> bool:
+async def _offer_near_matches(
+    session: CallSession, intent: str, result: dict, offered_date: str | None
+) -> bool:
     """-> True if this response was an ambiguity and the turn is now finished.
 
     An ambiguous response is a QUESTION the clinic asked back, so nothing
@@ -1257,21 +1328,33 @@ async def _offer_near_matches(session: CallSession, intent: str, result: dict,
         return False
 
     candidates = result.get("candidates") or []
-    logger.info("[%s] %s ambiguous (%d candidate(s)) -- offering instead of guessing",
-                session.call_id, intent, len(candidates))
+    logger.info(
+        "[%s] %s ambiguous (%d candidate(s)) -- offering instead of guessing",
+        session.call_id,
+        intent,
+        len(candidates),
+    )
 
-    session.pending = {
-        "awaiting": "entity_choice", "intent": intent, "slots": {},
-        "candidates": candidates, "offered_date": offered_date, "retries": 0,
-    } if candidates else None
+    session.pending = (
+        {
+            "awaiting": "entity_choice",
+            "intent": intent,
+            "slots": {},
+            "candidates": candidates,
+            "offered_date": offered_date,
+            "retries": 0,
+        }
+        if candidates
+        else None
+    )
 
     await _speak(session, near_match_prompt(candidates))
     return True
 
 
-async def _speak_fact(session: CallSession, intent: str, slots: dict,
-                      result: dict, reply: str,
-                      offered_date: str | None = None) -> bool:
+async def _speak_fact(
+    session: CallSession, intent: str, slots: dict, result: dict, reply: str, offered_date: str | None = None
+) -> bool:
     """Speak a factual reply, saying so if it contradicts an earlier one.
 
     `reply` is always rendered FRESH by the caller from a live clinic
@@ -1315,9 +1398,13 @@ async def _speak_fact(session: CallSession, intent: str, slots: dict,
         # clinic's data moved, or entity resolution landed on a different row
         # for the same words -- are told apart by whether the leading identity
         # in the two tuples matches. Facts only; no caller data reaches here.
-        logger.warning("[%s] %s answer changed within the call: %s -> %s",
-                       session.call_id, intent, previous,
-                       answer_ledger.facts(intent, result))
+        logger.warning(
+            "[%s] %s answer changed within the call: %s -> %s",
+            session.call_id,
+            intent,
+            previous,
+            answer_ledger.facts(intent, result),
+        )
         reply = with_change_notice(reply)
 
     await _speak(session, reply)
@@ -1351,8 +1438,13 @@ def _record_intent(session, data: dict, source: str, **detail) -> None:
     is about to drive the turn -- and which of the three tiers produced it,
     because "the LLM decided" and "a string match decided" are different
     claims about how the system understood the caller."""
-    _audit(session).intent(data.get("intent"), source, slots=data.get("slots") or {},
-                           direct_reply_bn=data.get("direct_reply_bn"), **detail)
+    _audit(session).intent(
+        data.get("intent"),
+        source,
+        slots=data.get("slots") or {},
+        direct_reply_bn=data.get("direct_reply_bn"),
+        **detail,
+    )
 
 
 async def _resolve_intent(session: CallSession, text: str) -> dict:
@@ -1376,12 +1468,21 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
         mixed = code_mix.for_fast_path(text)
         hit = await asyncio.to_thread(_fast_path.resolve, mixed.text)
         if hit is not None:
-            logger.info("[%s] fast path resolved %s (%.2f) -- no LLM call",
-                        session.call_id, hit.intent, hit.confidence)
+            logger.info(
+                "[%s] fast path resolved %s (%.2f) -- no LLM call",
+                session.call_id,
+                hit.intent,
+                hit.confidence,
+            )
             data = hit.as_llm_shape()
-            _record_intent(session, data, "fast_path", confidence=round(hit.confidence, 3),
-                           matched_form=hit.matched_form,
-                           **({"code_mix_words": mixed.changed} if mixed.changed else {}))
+            _record_intent(
+                session,
+                data,
+                "fast_path",
+                confidence=round(hit.confidence, 3),
+                matched_form=hit.matched_form,
+                **({"code_mix_words": mixed.changed} if mixed.changed else {}),
+            )
             return data
 
     # The three calls below all make BLOCKING urllib requests to Ollama --
@@ -1397,12 +1498,22 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
         return cached
 
     data, diag = await run_http(extract_intent, text)
-    logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
-                session.call_id, diag["total_time_s"], diag["attempts"])
+    logger.info(
+        "[%s] intent extracted in %.2fs (%d attempt(s))",
+        session.call_id,
+        diag["total_time_s"],
+        diag["attempts"],
+    )
     # Recorded BEFORE the cache write below, so a cache failure cannot cost
     # the record of what the model actually returned.
-    _record_intent(session, data, "llm", attempts=diag["attempts"],
-                   latency_s=round(diag["total_time_s"], 3), retry_errors=diag["errors"])
+    _record_intent(
+        session,
+        data,
+        "llm",
+        attempts=diag["attempts"],
+        latency_s=round(diag["total_time_s"], 3),
+        retry_errors=diag["errors"],
+    )
     await run_http(_intent_cache.put, text, data)
     return data
 
@@ -1550,13 +1661,19 @@ def _clean_patient_name(text: str) -> str | None:
         return None
     for prefix in _NAME_PREFIXES:
         if t.startswith(prefix):
-            t = t[len(prefix):].strip()
+            t = t[len(prefix) :].strip()
             break
     return t or None
 
 
-async def _finish_booking(session: CallSession, slots: dict, from_record: bool = False, *,
-                           confirmed: bool = False, language: str = "bengali"):
+async def _finish_booking(
+    session: CallSession,
+    slots: dict,
+    from_record: bool = False,
+    *,
+    confirmed: bool = False,
+    language: str = "bengali",
+):
     """All 5 fields are filled -- place the booking and clear pending
     regardless of outcome. Failure here is reported the same way the old
     single-shot book_appointment branch reported it (tool_failure
@@ -1604,11 +1721,16 @@ async def _finish_booking(session: CallSession, slots: dict, from_record: bool =
         # Not an error the caller caused -- most likely a new code path that
         # skipped the readback. Log it loudly, then do the safe thing rather
         # than the convenient one: ask, and write only if they say yes.
-        logger.error("[%s] booking reached _finish_booking unconfirmed -- "
-                     "refusing the write and asking the caller", session.call_id)
+        logger.error(
+            "[%s] booking reached _finish_booking unconfirmed -- refusing the write and asking the caller",
+            session.call_id,
+        )
         session.pending = {
-            "awaiting": "confirm_booking", "slots": slots,
-            "candidates": None, "offered_date": slots.get("date"), "retries": 0,
+            "awaiting": "confirm_booking",
+            "slots": slots,
+            "candidates": None,
+            "offered_date": slots.get("date"),
+            "retries": 0,
         }
         await _speak(session, booking_confirm_prompt(slots))
         return
@@ -1616,13 +1738,15 @@ async def _finish_booking(session: CallSession, slots: dict, from_record: bool =
     session.pending = None
     try:
         result = await _tools.book_appointment(
-            slots["doctor_name"], slots["date"], slots["time_slot"],
-            slots["patient_name"], slots["phone"],
+            slots["doctor_name"],
+            slots["date"],
+            slots["time_slot"],
+            slots["patient_name"],
+            slots["phone"],
         )
     except ToolCallError as e:
         logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-        await _speak(session, SYSTEM_UNREACHABLE_BN,
-                     fallback_reason="tool_failure")
+        await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
         return
     # story title: The agent says it cannot confirm rather than guessing
     # user story: As a caller, I want to be told plainly when the system
@@ -1665,25 +1789,38 @@ async def _finish_booking(session: CallSession, slots: dict, from_record: bool =
     # every field is re-confirmed against the doctor they actually chose.
     if result.get("reason") == "doctor_ambiguous":
         candidates = result.get("candidates") or []
-        logger.info("[%s] booking refused: %r matches %d doctors",
-                    session.call_id, slots.get("doctor_name"), len(candidates))
-        session.pending = {
-            "awaiting": "entity_choice", "intent": "doctor_availability",
-            "slots": {}, "candidates": candidates,
-            "offered_date": slots.get("date"), "retries": 0,
-        } if candidates else None
+        logger.info(
+            "[%s] booking refused: %r matches %d doctors",
+            session.call_id,
+            slots.get("doctor_name"),
+            len(candidates),
+        )
+        session.pending = (
+            {
+                "awaiting": "entity_choice",
+                "intent": "doctor_availability",
+                "slots": {},
+                "candidates": candidates,
+                "offered_date": slots.get("date"),
+                "retries": 0,
+            }
+            if candidates
+            else None
+        )
         await _speak(session, near_match_prompt(candidates))
         return
 
     unverified = outcomes.missing_booking_write_fields(result)
     if unverified:
-        logger.error("[%s] booking write is unverifiable -- missing %s. The "
-                     "appointment WAS created; the response did not carry it back.",
-                     session.call_id, unverified)
+        logger.error(
+            "[%s] booking write is unverifiable -- missing %s. The "
+            "appointment WAS created; the response did not carry it back.",
+            session.call_id,
+            unverified,
+        )
         if _tools is not None:
             _tools.outcomes.record("book_appointment", tool_outcome.INSUFFICIENT)
-        turn_log.record_insufficient(session.call_id, session.utt_seq,
-                                     "book_appointment", unverified)
+        turn_log.record_insufficient(session.call_id, session.utt_seq, "book_appointment", unverified)
         await _speak(session, INSUFFICIENT_VERIFIED_INFORMATION_BN)
         return
     reply = booking_reply(slots, result, language=language)
@@ -1713,29 +1850,40 @@ async def _finish_callback(session: CallSession, slots: dict, language: str = "b
     session.pending = None
     try:
         result = await _tools.request_callback(
-            slots["phone"], slots["callback_time_window"], slots.get("callback_reason"),
+            slots["phone"],
+            slots["callback_time_window"],
+            slots.get("callback_reason"),
         )
     except ToolCallError as e:
         logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-        await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                     fallback_reason="tool_failure")
+        await _speak(
+            session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।", fallback_reason="tool_failure"
+        )
         return
 
     if result.get("success"):
         missing = missing_callback_write_fields(result)
         if missing:
-            logger.error("[%s] callback request reported success but missing %s -- withholding confirmation",
-                         session.call_id, missing)
+            logger.error(
+                "[%s] callback request reported success but missing %s -- withholding confirmation",
+                session.call_id,
+                missing,
+            )
             record_insufficient_verified_information(
-                intent="request_callback", field=",".join(missing),
-                reason="missing_after_success", call_id=session.call_id,
+                intent="request_callback",
+                field=",".join(missing),
+                reason="missing_after_success",
+                call_id=session.call_id,
             )
             # INSUFFICIENT_VERIFIED_INFORMATION_BN is Bengali-only by design
             # (see its own comment in agent/reply_templates.py) -- `language`
             # is accepted here for signature parity with the rest of this
             # story's functions but not yet threaded into this one sentence.
-            await _speak(session, INSUFFICIENT_VERIFIED_INFORMATION_BN,
-                         fallback_reason="insufficient_verified_information")
+            await _speak(
+                session,
+                INSUFFICIENT_VERIFIED_INFORMATION_BN,
+                fallback_reason="insufficient_verified_information",
+            )
             return
 
     await _speak(session, callback_scheduled_reply(slots, result, language=language))
@@ -1750,8 +1898,9 @@ async def _finish_callback(session: CallSession, slots: dict, language: str = "b
 # exist only to do the I/O those pure functions cannot do themselves:
 # await the tools client, then hand the response to the right interpret_*()
 # call and speak/store whatever it returns.
-async def _finish_report_flow(session: CallSession, phone: str, result: dict, flow: str,
-                               language: str = "bengali"):
+async def _finish_report_flow(
+    session: CallSession, phone: str, result: dict, flow: str, language: str = "bengali"
+):
     """Common tail for BOTH a fresh report_status/report_send lookup and a
     caller resolving a "which report?" disambiguation (see the
     "which_report" pending state below, which reconstructs a `result`
@@ -1774,8 +1923,9 @@ async def _finish_report_flow(session: CallSession, phone: str, result: dict, fl
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             session.pending = None
-            await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                         fallback_reason="tool_failure")
+            await _speak(
+                session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।", fallback_reason="tool_failure"
+            )
             return
         text, pending = interpret_delivery_request_result(delivery_result, report_number, language=language)
     if pending is not None:
@@ -1789,8 +1939,9 @@ async def _finish_report_flow(session: CallSession, phone: str, result: dict, fl
         await _speak(session, text)
 
 
-async def _handle_report_lookup(session: CallSession, phone: str, test_name: str | None, flow: str,
-                                 language: str = "bengali"):
+async def _handle_report_lookup(
+    session: CallSession, phone: str, test_name: str | None, flow: str, language: str = "bengali"
+):
     """Entry point for BOTH the report_status and report_send intents (see
     _dispatch_turn below) once a phone number is in hand, and for the
     "phone" pending state once a caller who was first asked for one gives
@@ -1807,8 +1958,9 @@ async def _handle_report_lookup(session: CallSession, phone: str, test_name: str
     except ToolCallError as e:
         logger.error("[%s] clinic API call failed: %s", session.call_id, e)
         session.pending = None
-        await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                     fallback_reason="tool_failure")
+        await _speak(
+            session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।", fallback_reason="tool_failure"
+        )
         return
     await _finish_report_flow(session, phone, result, flow, language=language)
 
@@ -1858,7 +2010,11 @@ async def _resolve_comparable_entity(name: str) -> dict:
 # canonical name for each trackable slot -- see _remember_primary_entity()
 # below for why the canonical name, not the caller's raw words, is what
 # gets remembered.
-_CANONICAL_NAME_FIELD = {"test_name": "test_name", "doctor_name": "doctor_name", "package_name": "package_name"}
+_CANONICAL_NAME_FIELD = {
+    "test_name": "test_name",
+    "doctor_name": "doctor_name",
+    "package_name": "package_name",
+}
 
 
 def _session_state(session: CallSession) -> DialogueState | None:
@@ -2180,8 +2336,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
                 return False
             await _speak(session, missing_slot_prompt(pending["flow"], "phone", language=language))
             return True
-        await _handle_report_lookup(session, phone, pending.get("test_name"), pending["flow"],
-                                     language=language)
+        await _handle_report_lookup(
+            session, phone, pending.get("test_name"), pending["flow"], language=language
+        )
         return True
 
     # NOTE: confirm_booking/confirm_correction are handled below, together
@@ -2227,8 +2384,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
                 return False
             await _speak(session, missing_slot_prompt(pending["flow"], "phone", language=language))
             return True
-        await _handle_report_lookup(session, phone, pending.get("test_name"), pending["flow"],
-                                     language=language)
+        await _handle_report_lookup(
+            session, phone, pending.get("test_name"), pending["flow"], language=language
+        )
         return True
 
     # ADDED BY SOURAV -- Phase 1: Database Schema & Policy Tables.
@@ -2284,13 +2442,16 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             if pending["retries"] > 2:
                 session.pending = None
                 return False
-            await _speak(session, missing_slot_prompt("insurance_coverage", pending["missing_field"],
-                                                        language=language))
+            await _speak(
+                session,
+                missing_slot_prompt("insurance_coverage", pending["missing_field"], language=language),
+            )
             return True
         pending["slots"][pending["missing_field"]] = value
         pending["retries"] = 0
         still_missing = next(
-            (f for f in ("test_name", "insurance_provider_name") if not pending["slots"].get(f)), None,
+            (f for f in ("test_name", "insurance_provider_name") if not pending["slots"].get(f)),
+            None,
         )
         if still_missing:
             pending["missing_field"] = still_missing
@@ -2299,7 +2460,8 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         final_slots = pending["slots"]
         session.pending = None
         result = await _tools.get_insurance_coverage(
-            final_slots["test_name"], final_slots["insurance_provider_name"],
+            final_slots["test_name"],
+            final_slots["insurance_provider_name"],
         )
         await _speak(session, insurance_coverage_reply(final_slots, result, language=language))
         return True
@@ -2321,13 +2483,15 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             if pending["retries"] > 2:
                 session.pending = None
                 return False
-            await _speak(session, missing_slot_prompt("compare_options", pending["missing_field"],
-                                                        language=language))
+            await _speak(
+                session, missing_slot_prompt("compare_options", pending["missing_field"], language=language)
+            )
             return True
         pending["slots"][pending["missing_field"]] = value
         pending["retries"] = 0
         still_missing = next(
-            (f for f in ("compare_option_a", "compare_option_b") if not pending["slots"].get(f)), None,
+            (f for f in ("compare_option_a", "compare_option_b") if not pending["slots"].get(f)),
+            None,
         )
         if still_missing:
             pending["missing_field"] = still_missing
@@ -2336,9 +2500,14 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         final_slots = pending["slots"]
         session.pending = None
         name_a, name_b = final_slots["compare_option_a"], final_slots["compare_option_b"]
-        entity_a, entity_b = await _resolve_comparable_entity(name_a), await _resolve_comparable_entity(name_b)
+        entity_a, entity_b = (
+            await _resolve_comparable_entity(name_a),
+            await _resolve_comparable_entity(name_b),
+        )
         comparison = build_comparison(entity_a, entity_b)
-        await _speak(session, compare_options_reply(name_a, name_b, entity_a, entity_b, comparison, language=language))
+        await _speak(
+            session, compare_options_reply(name_a, name_b, entity_a, entity_b, comparison, language=language)
+        )
         _remember_compared_entities(session, entity_a, entity_b)
         return True
 
@@ -2361,7 +2530,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             if pending["retries"] > 2:
                 session.pending = None
                 return False
-            await _speak(session, ambiguous_reference_reply(pending["kind"], pending["candidates"], language=language))
+            await _speak(
+                session, ambiguous_reference_reply(pending["kind"], pending["candidates"], language=language)
+            )
             return True
         session.pending = None
         # The caller just resolved the ambiguity themselves -- collapsing
@@ -2402,7 +2573,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             if pending["retries"] > 2:
                 session.pending = None
                 return False
-            await _speak(session, missing_slot_prompt("request_callback", "callback_time_window", language=language))
+            await _speak(
+                session, missing_slot_prompt("request_callback", "callback_time_window", language=language)
+            )
             return True
         pending["slots"]["callback_time_window"] = window
         pending["retries"] = 0
@@ -2426,7 +2599,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             if pending["retries"] > 2:
                 session.pending = None
                 return False
-            await _speak(session, missing_slot_prompt("request_callback", "callback_phone", language=language))
+            await _speak(
+                session, missing_slot_prompt("request_callback", "callback_phone", language=language)
+            )
             return True
         pending["slots"]["phone"] = phone
         pending["retries"] = 0
@@ -2484,8 +2659,7 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         # status read in an already-rare multi-report case.
         chosen = next(c for c in candidates if c["report_number"] == report_number)
         result = {"patient_found": True, "found": True, **chosen}
-        await _finish_report_flow(session, pending.get("phone"), result, pending["flow"],
-                                   language=language)
+        await _finish_report_flow(session, pending.get("phone"), result, pending["flow"], language=language)
         return True
 
     if awaiting == "confirm_delivery":
@@ -2497,11 +2671,15 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             except ToolCallError as e:
                 logger.error("[%s] clinic API call failed: %s", session.call_id, e)
                 session.pending = None
-                await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                             fallback_reason="tool_failure")
+                await _speak(
+                    session,
+                    "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
+                    fallback_reason="tool_failure",
+                )
                 return True
             text_out, new_pending = interpret_delivery_request_result(
-                delivery_result, report_number, language=language)
+                delivery_result, report_number, language=language
+            )
             if new_pending is not None:
                 new_pending["phone"] = phone
             session.pending = new_pending
@@ -2546,8 +2724,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             session.pending = None
-            await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                         fallback_reason="tool_failure")
+            await _speak(
+                session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।", fallback_reason="tool_failure"
+            )
             return True
         text_out, new_pending = interpret_otp_verify_result(result, report_number, language=language)
         if new_pending is not None:
@@ -2648,8 +2827,7 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             # pending["slots"], and only the named one is re-collected.
             pending["awaiting"] = "confirm_correction"
             pending["retries"] = 0
-            logger.info("[%s] readback rejected -- opening the correction path",
-                        session.call_id)
+            logger.info("[%s] readback rejected -- opening the correction path", session.call_id)
             await _speak(session, booking_correction_prompt(language=language))
             return True
 
@@ -2688,8 +2866,7 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             pending["retries"] += 1
             if pending["retries"] > 2:
                 session.pending = None
-                logger.info("[%s] correction abandoned -- no field named",
-                            session.call_id)
+                logger.info("[%s] correction abandoned -- no field named", session.call_id)
                 await _speak(session, BOOKING_NOT_CONFIRMED_BN)
                 return True
             await _speak(session, booking_correction_prompt(language=language))
@@ -2738,21 +2915,20 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
 
         date_iso = pending.get("offered_date")
         session.pending = None
-        logger.info("[%s] %s disambiguated to %r", session.call_id, intent,
-                    chosen.get("name"))
+        logger.info("[%s] %s disambiguated to %r", session.call_id, intent, chosen.get("name"))
 
         try:
             if intent == "test_rate":
                 result = await _tools.get_test_rate(chosen["name"])
             elif intent == "doctor_availability":
                 result = await _tools.get_doctor_availability(
-                    chosen["name"], date_iso or datetime.date.today().isoformat())
+                    chosen["name"], date_iso or datetime.date.today().isoformat()
+                )
             else:
                 result = await _tools.get_doctors_by_department(chosen["name"], date_iso)
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-            await _speak(session, SYSTEM_UNREACHABLE_BN,
-                         fallback_reason="tool_failure")
+            await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
             return True
 
         # Three near-identical calls rather than one over a `reply` local,
@@ -2770,21 +2946,31 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         spoken_name = chosen.get("name_bn") or chosen["name"]
         if intent == "test_rate":
             asked = {"test_name": spoken_name}
-            if await _speak_fact(session, intent, asked, result,
-                                 test_rate_reply(asked, result),
-                                 offered_date=date_iso):
+            if await _speak_fact(
+                session, intent, asked, result, test_rate_reply(asked, result), offered_date=date_iso
+            ):
                 return True
         elif intent == "doctor_availability":
             asked = {"doctor_name": spoken_name}
-            if await _speak_fact(session, intent, asked, result,
-                                 doctor_availability_reply(asked, result),
-                                 offered_date=date_iso):
+            if await _speak_fact(
+                session,
+                intent,
+                asked,
+                result,
+                doctor_availability_reply(asked, result),
+                offered_date=date_iso,
+            ):
                 return True
         else:
             asked = {"department": spoken_name}
-            if await _speak_fact(session, intent, asked, result,
-                                 doctors_by_department_reply(asked, result),
-                                 offered_date=date_iso):
+            if await _speak_fact(
+                session,
+                intent,
+                asked,
+                result,
+                doctors_by_department_reply(asked, result),
+                offered_date=date_iso,
+            ):
                 return True
         return True
 
@@ -2810,8 +2996,7 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             session.pending = None
-            await _speak(session, SYSTEM_UNREACHABLE_BN,
-                         fallback_reason="tool_failure")
+            await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
             return True
 
         # story title: The same question gets the same answer within one call
@@ -2826,9 +3011,14 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         # consistency check cannot be forgotten on one route. The reply itself is
         # still rendered here, fresh, from this turn's live clinic response.
         asked = {"doctor_name": match.get("name_bn") or match["name"]}
-        if await _speak_fact(session, "doctor_availability", asked, result,
-                             doctor_availability_reply(asked, result, language=language),
-                             offered_date=date_iso):
+        if await _speak_fact(
+            session,
+            "doctor_availability",
+            asked,
+            result,
+            doctor_availability_reply(asked, result, language=language),
+            offered_date=date_iso,
+        ):
             return True
 
         offered = None
@@ -2849,7 +3039,9 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
                     "doctor_name": result.get("doctor_name") or match["name"],
                     "doctor_name_bn": result.get("doctor_name_bn") or match.get("name_bn"),
                 },
-                "candidates": None, "offered_date": offered, "retries": 0,
+                "candidates": None,
+                "offered_date": offered,
+                "retries": 0,
             }
         else:
             session.pending = None
@@ -2886,25 +3078,37 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
                 except ToolCallError as e:
                     logger.error("[%s] clinic API call failed: %s", session.call_id, e)
                     session.pending = None
-                    await _speak(session, SYSTEM_UNREACHABLE_BN,
-                                 fallback_reason="tool_failure")
+                    await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
                     return True
                 asked = {"doctor_name": doctor_name}
-                if await _speak_fact(session, "doctor_availability", asked, result,
-                                     doctor_availability_reply(asked, result),
-                                     offered_date=start):
+                if await _speak_fact(
+                    session,
+                    "doctor_availability",
+                    asked,
+                    result,
+                    doctor_availability_reply(asked, result),
+                    offered_date=start,
+                ):
                     return True
                 offered = None
                 if result.get("found"):
-                    offered = result.get("date") if result.get("available") else result.get("next_available_date")
-                session.pending = {
-                    "awaiting": "date",
-                    "slots": {
-                        "doctor_name": result.get("doctor_name") or doctor_name,
-                        "doctor_name_bn": result.get("doctor_name_bn"),
-                    },
-                    "candidates": None, "offered_date": offered, "retries": 0,
-                } if offered else None
+                    offered = (
+                        result.get("date") if result.get("available") else result.get("next_available_date")
+                    )
+                session.pending = (
+                    {
+                        "awaiting": "date",
+                        "slots": {
+                            "doctor_name": result.get("doctor_name") or doctor_name,
+                            "doctor_name_bn": result.get("doctor_name_bn"),
+                        },
+                        "candidates": None,
+                        "offered_date": offered,
+                        "retries": 0,
+                    }
+                    if offered
+                    else None
+                )
                 return True
 
             department = pending["slots"]["department"]
@@ -2913,29 +3117,33 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
             except ToolCallError as e:
                 logger.error("[%s] clinic API call failed: %s", session.call_id, e)
                 session.pending = None
-                await _speak(session, SYSTEM_UNREACHABLE_BN,
-                             fallback_reason="tool_failure")
+                await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
                 return True
             asked = {"department": department}
-            if await _speak_fact(session, "doctors_by_department", asked, result,
-                                 doctors_by_department_reply(asked, result),
-                                 offered_date=start):
+            if await _speak_fact(
+                session,
+                "doctors_by_department",
+                asked,
+                result,
+                doctors_by_department_reply(asked, result),
+                offered_date=start,
+            ):
                 return True
             if result.get("found") and result.get("doctors"):
                 session.pending = {
-                    "awaiting": "doctor_choice", "slots": {},
+                    "awaiting": "doctor_choice",
+                    "slots": {},
                     "candidates": [
-                        {"name": d["name"], "name_bn": d.get("doctor_name_bn")}
-                        for d in result["doctors"]
+                        {"name": d["name"], "name_bn": d.get("doctor_name_bn")} for d in result["doctors"]
                     ],
-                    "offered_date": start, "retries": 0,
+                    "offered_date": start,
+                    "retries": 0,
                 }
             else:
                 session.pending = None
             return True
 
-        ask_state = ("availability_date" if resume == "doctor_availability"
-                     else "department_date")
+        ask_state = "availability_date" if resume == "doctor_availability" else "department_date"
         pending["awaiting"] = ask_state
         pending["offered_date"] = None
         pending["retries"] = 0
@@ -2975,27 +3183,37 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             session.pending = None
-            await _speak(session, SYSTEM_UNREACHABLE_BN,
-                         fallback_reason="tool_failure")
+            await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
             return True
 
         asked = {"doctor_name": doctor_name}
-        if await _speak_fact(session, "doctor_availability", asked, result,
-                             doctor_availability_reply(asked, result),
-                             offered_date=value):
+        if await _speak_fact(
+            session,
+            "doctor_availability",
+            asked,
+            result,
+            doctor_availability_reply(asked, result),
+            offered_date=value,
+        ):
             return True
 
         offered = None
         if result.get("found"):
             offered = result.get("date") if result.get("available") else result.get("next_available_date")
-        session.pending = {
-            "awaiting": "date",
-            "slots": {
-                "doctor_name": result.get("doctor_name") or doctor_name,
-                "doctor_name_bn": result.get("doctor_name_bn"),
-            },
-            "candidates": None, "offered_date": offered, "retries": 0,
-        } if offered else None
+        session.pending = (
+            {
+                "awaiting": "date",
+                "slots": {
+                    "doctor_name": result.get("doctor_name") or doctor_name,
+                    "doctor_name_bn": result.get("doctor_name_bn"),
+                },
+                "candidates": None,
+                "offered_date": offered,
+                "retries": 0,
+            }
+            if offered
+            else None
+        )
         return True
 
     if awaiting == "department_date":
@@ -3021,14 +3239,18 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
             session.pending = None
-            await _speak(session, SYSTEM_UNREACHABLE_BN,
-                         fallback_reason="tool_failure")
+            await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
             return True
 
         asked = {"department": department}
-        if await _speak_fact(session, "doctors_by_department", asked, result,
-                             doctors_by_department_reply(asked, result, language=language),
-                             offered_date=value):
+        if await _speak_fact(
+            session,
+            "doctors_by_department",
+            asked,
+            result,
+            doctors_by_department_reply(asked, result, language=language),
+            offered_date=value,
+        ):
             return True
 
         if result.get("found") and result.get("doctors"):
@@ -3036,10 +3258,10 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
                 "awaiting": "doctor_choice",
                 "slots": {},
                 "candidates": [
-                    {"name": d["name"], "name_bn": d.get("doctor_name_bn")}
-                    for d in result["doctors"]
+                    {"name": d["name"], "name_bn": d.get("doctor_name_bn")} for d in result["doctors"]
                 ],
-                "offered_date": value, "retries": 0,
+                "offered_date": value,
+                "retries": 0,
             }
         elif result.get("found"):
             # Still nobody that day either -- stay in the same state and
@@ -3090,8 +3312,7 @@ async def _continue_pending(session: CallSession, text: str) -> bool:
         # verification step (see _finish_booking()'s own docstring), so it
         # skips straight to the write rather than a second spoken readback.
         if pending.get("from_record"):
-            await _finish_booking(session, pending["slots"], from_record=True,
-                                  language=language)
+            await _finish_booking(session, pending["slots"], from_record=True, language=language)
             return True
         # Every field is filled, but nothing is written yet. Read the whole
         # thing back and wait for a yes -- see the "confirm_booking" state
@@ -3166,14 +3387,13 @@ async def _run_parts(session: CallSession, text: str, parts: list[dict]) -> bool
     dropped, deliberately, rather than left to misread the next utterance.
     """
     for index, part in enumerate(parts):
-        remaining = parts[index + 1:]
+        remaining = parts[index + 1 :]
         outcome = await _answer_part(session, text, part)
 
         if outcome == INTERACTIVE:
             if remaining:
                 session.deferred = {"parts": remaining, "text": text, "age": 0}
-                logger.info("[%s] deferring %d part(s) behind a question",
-                            session.call_id, len(remaining))
+                logger.info("[%s] deferring %d part(s) behind a question", session.call_id, len(remaining))
                 await _speak(session, DEFERRED_PART_BN)
                 return True
             return False
@@ -3210,8 +3430,12 @@ async def _drain_deferred(session: CallSession, text: str) -> None:
         if queue["age"] <= MAX_DEFERRED_TURNS:
             return
         session.deferred = None
-        logger.info("[%s] dropping %d deferred part(s) after %d turns",
-                    session.call_id, len(queue["parts"]), queue["age"])
+        logger.info(
+            "[%s] dropping %d deferred part(s) after %d turns",
+            session.call_id,
+            len(queue["parts"]),
+            queue["age"],
+        )
         # Said, not silently binned. The caller asked; they are owed the
         # information that it went unanswered even when the answer is that
         # too much has happened since.
@@ -3277,8 +3501,7 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
             # Every factual reply goes through _speak_fact rather than _speak, so the
             # consistency check cannot be forgotten on one route. The reply itself is
             # still rendered here, fresh, from this turn's live clinic response.
-            if await _speak_fact(session, intent, slots, result,
-                                 test_rate_reply(slots, result)):
+            if await _speak_fact(session, intent, slots, result, test_rate_reply(slots, result)):
                 return INTERACTIVE
 
         elif intent == "doctor_availability":
@@ -3317,34 +3540,50 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
             #                 the caller actually asked.
             span = date_calc.resolve(text, slots.get("date_expr"))
             if span.needs_confirmation:
-                logger.info("[%s] %s -> %s..%s, confirming the range",
-                            session.call_id, span.expression, span.start, span.end)
+                logger.info(
+                    "[%s] %s -> %s..%s, confirming the range",
+                    session.call_id,
+                    span.expression,
+                    span.start,
+                    span.end,
+                )
                 session.pending = {
                     "awaiting": "confirm_date",
                     "slots": {"doctor_name": slots["doctor_name"]},
-                    "candidates": None, "offered_date": span.start, "retries": 0,
-                    "resume_intent": "doctor_availability", "span_end": span.end,
+                    "candidates": None,
+                    "offered_date": span.start,
+                    "retries": 0,
+                    "resume_intent": "doctor_availability",
+                    "span_end": span.end,
                 }
                 await _speak(session, date_range_confirm_prompt(span.start, span.end))
                 return INTERACTIVE
             if span.source == date_calc.SOURCE_UNMAPPED:
-                logger.info("[%s] caller named a day the vocabulary cannot express "
-                            "-- asking instead of assuming", session.call_id)
+                logger.info(
+                    "[%s] caller named a day the vocabulary cannot express -- asking instead of assuming",
+                    session.call_id,
+                )
                 session.pending = {
                     "awaiting": "availability_date",
                     "slots": {"doctor_name": slots["doctor_name"]},
-                    "candidates": None, "offered_date": None, "retries": 0,
+                    "candidates": None,
+                    "offered_date": None,
+                    "retries": 0,
                 }
                 await _speak(session, missing_slot_prompt(intent, "date"))
                 return INTERACTIVE
             if span.source == SOURCE_INTERPRETED:
-                logger.info("[%s] date interpreted: %s -> %s",
-                            session.call_id, span.expression, span.start)
+                logger.info("[%s] date interpreted: %s -> %s", session.call_id, span.expression, span.start)
             date_iso = span.start or datetime.date.today().isoformat()
             result = await _tools.get_doctor_availability(slots["doctor_name"], date_iso)
-            if await _speak_fact(session, intent, slots, result,
-                                 doctor_availability_reply(slots, result),
-                                 offered_date=date_iso):
+            if await _speak_fact(
+                session,
+                intent,
+                slots,
+                result,
+                doctor_availability_reply(slots, result),
+                offered_date=date_iso,
+            ):
                 return INTERACTIVE
 
             # Keep the flow open for "yes, book that day" / "another
@@ -3353,14 +3592,20 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
             offered = None
             if result.get("found"):
                 offered = result.get("date") if result.get("available") else result.get("next_available_date")
-            session.pending = {
-                "awaiting": "date",
-                "slots": {
-                    "doctor_name": result.get("doctor_name") or slots["doctor_name"],
-                    "doctor_name_bn": result.get("doctor_name_bn"),
-                },
-                "candidates": None, "offered_date": offered, "retries": 0,
-            } if offered else None
+            session.pending = (
+                {
+                    "awaiting": "date",
+                    "slots": {
+                        "doctor_name": result.get("doctor_name") or slots["doctor_name"],
+                        "doctor_name_bn": result.get("doctor_name_bn"),
+                    },
+                    "candidates": None,
+                    "offered_date": offered,
+                    "retries": 0,
+                }
+                if offered
+                else None
+            )
 
         elif intent == "doctors_by_department":
             if not slots.get("department"):
@@ -3397,34 +3642,50 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
             #                 the caller actually asked.
             span = date_calc.resolve(text, slots.get("date_expr"))
             if span.needs_confirmation:
-                logger.info("[%s] %s -> %s..%s, confirming the range",
-                            session.call_id, span.expression, span.start, span.end)
+                logger.info(
+                    "[%s] %s -> %s..%s, confirming the range",
+                    session.call_id,
+                    span.expression,
+                    span.start,
+                    span.end,
+                )
                 session.pending = {
                     "awaiting": "confirm_date",
                     "slots": {"department": slots["department"]},
-                    "candidates": None, "offered_date": span.start, "retries": 0,
-                    "resume_intent": "doctors_by_department", "span_end": span.end,
+                    "candidates": None,
+                    "offered_date": span.start,
+                    "retries": 0,
+                    "resume_intent": "doctors_by_department",
+                    "span_end": span.end,
                 }
                 await _speak(session, date_range_confirm_prompt(span.start, span.end))
                 return INTERACTIVE
             if span.source == date_calc.SOURCE_UNMAPPED:
-                logger.info("[%s] caller named a day the vocabulary cannot express "
-                            "-- asking instead of assuming", session.call_id)
+                logger.info(
+                    "[%s] caller named a day the vocabulary cannot express -- asking instead of assuming",
+                    session.call_id,
+                )
                 session.pending = {
                     "awaiting": "department_date",
                     "slots": {"department": slots["department"]},
-                    "candidates": None, "offered_date": None, "retries": 0,
+                    "candidates": None,
+                    "offered_date": None,
+                    "retries": 0,
                 }
                 await _speak(session, missing_slot_prompt(intent, "date"))
                 return INTERACTIVE
             if span.source == SOURCE_INTERPRETED:
-                logger.info("[%s] date interpreted: %s -> %s",
-                            session.call_id, span.expression, span.start)
+                logger.info("[%s] date interpreted: %s -> %s", session.call_id, span.expression, span.start)
             date_iso = span.start or datetime.date.today().isoformat()
             result = await _tools.get_doctors_by_department(slots["department"], date_iso)
-            if await _speak_fact(session, intent, slots, result,
-                                 doctors_by_department_reply(slots, result),
-                                 offered_date=date_iso):
+            if await _speak_fact(
+                session,
+                intent,
+                slots,
+                result,
+                doctors_by_department_reply(slots, result),
+                offered_date=date_iso,
+            ):
                 return INTERACTIVE
 
             # Continue straight into booking: offer the doctors just
@@ -3438,8 +3699,7 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
                     "awaiting": "doctor_choice",
                     "slots": {},
                     "candidates": [
-                        {"name": d["name"], "name_bn": d.get("doctor_name_bn")}
-                        for d in result["doctors"]
+                        {"name": d["name"], "name_bn": d.get("doctor_name_bn")} for d in result["doctors"]
                     ],
                     "offered_date": date_iso,
                     "retries": 0,
@@ -3456,7 +3716,9 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
                 session.pending = {
                     "awaiting": "department_date",
                     "slots": {"department": slots["department"]},
-                    "candidates": None, "offered_date": None, "retries": 0,
+                    "candidates": None,
+                    "offered_date": None,
+                    "retries": 0,
                 }
             else:
                 session.pending = None
@@ -3504,8 +3766,13 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
                     continue
                 parsed = parser(text)
                 if parsed and parsed != merged.get(field):
-                    logger.warning("[%s] %s disagreement: model=%s parsed=%s -- using parsed",
-                                   session.call_id, field, merged.get(field), parsed)
+                    logger.warning(
+                        "[%s] %s disagreement: model=%s parsed=%s -- using parsed",
+                        session.call_id,
+                        field,
+                        merged.get(field),
+                        parsed,
+                    )
                     merged[field] = parsed
 
             # The date is not merged from `slots` at all any more, because
@@ -3536,29 +3803,47 @@ async def _answer_part(session: CallSession, text: str, part: dict) -> str:
                 # mishearing is likeliest and least visible. Route it
                 # through the same confirmation state as the slow path.
                 session.pending = {
-                    "awaiting": "confirm_booking", "slots": merged,
+                    "awaiting": "confirm_booking",
+                    "slots": merged,
                     "candidates": None,
-                    "offered_date": merged.get("date"), "retries": 0,
+                    "offered_date": merged.get("date"),
+                    "retries": 0,
                 }
                 await _speak(session, booking_confirm_prompt(merged))
                 return INTERACTIVE
 
             session.pending = {
-                "awaiting": missing, "slots": merged, "candidates": None,
-                "offered_date": (session.pending or {}).get("offered_date"), "retries": 0,
+                "awaiting": missing,
+                "slots": merged,
+                "candidates": None,
+                "offered_date": (session.pending or {}).get("offered_date"),
+                "retries": 0,
             }
             await _speak(session, missing_slot_prompt(intent, missing))
             return INTERACTIVE
 
     except ToolCallError as e:
         logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-        await _speak(session, SYSTEM_UNREACHABLE_BN,
-                     fallback_reason="tool_failure")
+        await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
         return UNANSWERABLE
 
     return ANSWERED
 
 
+# NOTE (merge dev_chakravardhan -> staging_merged): dev_chakravardhan's
+# equivalent of _dispatch_turn/_dispatch_turn_inner below was named
+# _dispatch_turn/_run_turn, with its own real body (the ASR -> intent ->
+# tool -> reply -> TTS pipeline, now kept below under _dispatch_turn_inner)
+# extended with text_override/text_source (the keypad/text-message entry
+# point) and session.dispatch_lock. The two branches' _dispatch_turn
+# WRAPPERS did genuinely different, both real things -- HEAD's incremented
+# the _turn_crashes health metric and spoke a fallback so the caller never
+# hears dead air (see the health-check dict above and this file's own "THE
+# THIRD OUTCOME, WHICH SHOULD NOT EXIST" story just above); chakra's
+# recorded the failure to the call's own audit trail via _audit(session).
+# error() before re-raising. The merged wrapper below does both, and keeps
+# re-raising nothing further so the crash-guard behaviour HEAD relied on is
+# preserved.
 def _suppress_echo_in_place(clip_path: str, reference) -> None:
     """Subtract the agent's own playback out of a barge-in clip, in place.
 
@@ -3578,8 +3863,7 @@ def _suppress_echo_in_place(clip_path: str, reference) -> None:
         logger.warning("echo suppression skipped for %s: %s", clip_path, e)
 
 
-async def _clarify_or_offer_keypad(session: CallSession, quality=None,
-                                   reason: str = "low_quality"):
+async def _clarify_or_offer_keypad(session: CallSession, quality=None, reason: str = "low_quality"):
     """The turn could not be acted on. Decide WHICH way to say so.
 
     Everything that means "we did not understand this caller" funnels
@@ -3595,8 +3879,12 @@ async def _clarify_or_offer_keypad(session: CallSession, quality=None,
 
     if action == ACTION_KEYPAD:
         METRICS.record_keypad_offer()
-        logger.info("[%s] %d consecutive failed turns (%s) -- offering keypad",
-                    session.call_id, session.failures.consecutive_failures, reason)
+        logger.info(
+            "[%s] %d consecutive failed turns (%s) -- offering keypad",
+            session.call_id,
+            session.failures.consecutive_failures,
+            reason,
+        )
         # Control frame first so the keys are on screen before the caller
         # hears why. Carries no display text of its own -- the spoken line
         # below is the one the caller reads in the log, and sending both
@@ -3606,9 +3894,13 @@ async def _clarify_or_offer_keypad(session: CallSession, quality=None,
         return
 
     METRICS.record_clarification()
-    logger.info("[%s] turn unusable (%s) -- asking again (failure %d/%d)",
-                session.call_id, reason, session.failures.consecutive_failures,
-                session.failures.max_retries)
+    logger.info(
+        "[%s] turn unusable (%s) -- asking again (failure %d/%d)",
+        session.call_id,
+        reason,
+        session.failures.consecutive_failures,
+        session.failures.max_retries,
+    )
     await _speak(session, CLARIFY_PROMPT_BN, fallback_reason=reason)
 
 
@@ -3629,7 +3921,6 @@ async def _handle_keypad_digit(session: CallSession, digit: str):
     session.failures.record_success()
     logger.info("[%s] keypad: %r -> %r", session.call_id, digit, text)
     await answer_turn(session, text, source="keypad")
-
 
 
 # ===========================================================================
@@ -3653,7 +3944,8 @@ async def _history_guard(session: CallSession, phone: str) -> bool:
     # room -- see privacy.channel_is_private(). On the phone line this is
     # exactly the audio-path check it always was.
     safe, reason = privacy.channel_is_private(
-        getattr(session, "channel", privacy.CHANNEL_VOICE), session.echo)
+        getattr(session, "channel", privacy.CHANNEL_VOICE), session.echo
+    )
     if safe:
         return True
 
@@ -3663,14 +3955,15 @@ async def _history_guard(session: CallSession, phone: str) -> bool:
     # the likeliest support response is to switch the check off.
     try:
         await _tools.record_disclosure_refusal(phone, reason, session.call_id)
-    except Exception:                                  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         pass
     await _speak(session, disclosure_blocked_reply(reason, session.lang))
     return False
 
 
-async def _start_history_verification(session: CallSession, phone: str | None,
-                                      purpose: str = PURPOSE_HISTORY):
+async def _start_history_verification(
+    session: CallSession, phone: str | None, purpose: str = PURPOSE_HISTORY
+):
     """Begin the challenge. Never says whether the number is known.
 
     `purpose` is what the caller asked for -- their history, or their
@@ -3682,8 +3975,12 @@ async def _start_history_verification(session: CallSession, phone: str | None,
         # nothing about whether the clinic holds one. See _continue_pending's
         # "record_phone" state.
         session.pending = {
-            "awaiting": "record_phone", "purpose": purpose, "slots": {},
-            "candidates": None, "offered_date": None, "retries": 0,
+            "awaiting": "record_phone",
+            "purpose": purpose,
+            "slots": {},
+            "candidates": None,
+            "offered_date": None,
+            "retries": 0,
         }
         await _speak(session, _t(session.lang, "timeline.ask_phone"))
         return
@@ -3695,8 +3992,7 @@ async def _start_history_verification(session: CallSession, phone: str | None,
         challenge = await _tools.begin_verification(phone, session.call_id)
     except ToolCallError as e:
         logger.error("[%s] verification start failed: %s", session.call_id, e)
-        await _speak(session, _t(session.lang, "generic.tool_failure"),
-                     fallback_reason="tool_failure")
+        await _speak(session, _t(session.lang, "generic.tool_failure"), fallback_reason="tool_failure")
         return
 
     if challenge.get("locked"):
@@ -3739,8 +4035,7 @@ async def _load_timeline(session: CallSession) -> dict | None:
         result = await _tools.read_history(session.history_token, session.call_id)
     except ToolCallError as e:
         logger.error("[%s] history read failed: %s", session.call_id, e)
-        await _speak(session, _t(session.lang, "generic.tool_failure"),
-                     fallback_reason="tool_failure")
+        await _speak(session, _t(session.lang, "generic.tool_failure"), fallback_reason="tool_failure")
         return None
 
     if not result.get("found"):
@@ -3850,13 +4145,11 @@ async def _continue_history_verification(session: CallSession, text: str) -> boo
     answer = lang_mod.to_ascii_digits(text)
 
     try:
-        outcome = await _tools.verify_caller(
-            session.history_phone or "", factor, answer, session.call_id)
+        outcome = await _tools.verify_caller(session.history_phone or "", factor, answer, session.call_id)
     except ToolCallError as e:
         logger.error("[%s] verification failed to run: %s", session.call_id, e)
         session.pending = None
-        await _speak(session, _t(session.lang, "generic.tool_failure"),
-                     fallback_reason="tool_failure")
+        await _speak(session, _t(session.lang, "generic.tool_failure"), fallback_reason="tool_failure")
         return True
 
     reply = outcome.get("reply")
@@ -3890,6 +4183,7 @@ async def _continue_history_verification(session: CallSession, text: str) -> boo
     await _speak(session, verification_failed_reply(exhausted, session.lang))
     return True
 
+
 # ===========================================================================
 # WHICH LANGUAGE IS THE CALLER SPEAKING? -- Author: Chakravardhan
 # ===========================================================================
@@ -3921,8 +4215,9 @@ def _adopt_language(session: CallSession, code: str | None, source: str = "asr_p
     if not code or code == session.lang or not lang_mod.is_enabled(code):
         return
     logger.info("[%s] caller language identified: %s -> %s", session.call_id, session.lang, code)
-    _audit(session).record("LANGUAGE_DETECTED",
-                           {"language_from": session.lang, "language_to": code, "source": source})
+    _audit(session).record(
+        "LANGUAGE_DETECTED", {"language_from": session.lang, "language_to": code, "source": source}
+    )
     session.lang = code
 
 
@@ -3990,8 +4285,7 @@ async def _transcribe_in_caller_language(session: CallSession, utterance_wav: st
     strategy = lang_mod.strategy()
     heard = lang_mod.enabled()
 
-    if (strategy == lang_mod.STRATEGY_PARALLEL and not session.language_probe_done
-            and len(heard) > 1):
+    if strategy == lang_mod.STRATEGY_PARALLEL and not session.language_probe_done and len(heard) > 1:
         # THE PROBE. Every checkpoint on this pod hears the same clip once,
         # and the call is served in whichever heard it best. N decodes on
         # ONE turn of the call, none after it.
@@ -4009,8 +4303,11 @@ async def _transcribe_in_caller_language(session: CallSession, utterance_wav: st
         # Only honest with a checkpoint that can EMIT more than one script.
         _adopt_language(session, lang_mod.detect_from_text(result.text, fallback=session.lang))
     # A later turn in another language -- see REPROBE_BELOW above.
-    if (strategy == lang_mod.STRATEGY_PARALLEL and len(heard) > 1
-            and _transcript_score(result) < REPROBE_BELOW):
+    if (
+        strategy == lang_mod.STRATEGY_PARALLEL
+        and len(heard) > 1
+        and _transcript_score(result) < REPROBE_BELOW
+    ):
         return await _reprobe(session, utterance_wav, heard, result)
     return result
 
@@ -4037,8 +4334,9 @@ def _save_for_other_channels(session: CallSession) -> None:
     before cleanup(), which drops the verification it relies on."""
     if _conversations is None or not session.history_token or not session.history_phone:
         return
-    _conversations.save(session.history_phone, lang=session.lang, pending=session.pending,
-                        channel=privacy.CHANNEL_VOICE)
+    _conversations.save(
+        session.history_phone, lang=session.lang, pending=session.pending, channel=privacy.CHANNEL_VOICE
+    )
 
 
 async def _resume_from_other_channel(session: CallSession) -> None:
@@ -4054,10 +4352,11 @@ async def _resume_from_other_channel(session: CallSession) -> None:
         return
     session.pending = snap.pending
     awaiting = snap.pending["awaiting"]
-    _audit(session).intent("resume_flow", "conversation_store", flow=awaiting,
-                           from_channel=snap.channel)
-    await _speak(session, _t(session.lang, "channel.resumed")
-                 + missing_slot_prompt("book_appointment", awaiting, session.lang))
+    _audit(session).intent("resume_flow", "conversation_store", flow=awaiting, from_channel=snap.channel)
+    await _speak(
+        session,
+        _t(session.lang, "channel.resumed") + missing_slot_prompt("book_appointment", awaiting, session.lang),
+    )
 
 
 async def start_text_services(transport: str) -> None:
@@ -4071,8 +4370,7 @@ async def start_text_services(transport: str) -> None:
     _audit_store = call_audit.AuditStore()
     recovered = _audit_store.recover_unfinished(transport)
     if recovered:
-        logger.warning("audit: finalised %d %s record(s) a previous run left open",
-                       recovered, transport)
+        logger.warning("audit: finalised %d %s record(s) a previous run left open", recovered, transport)
     _tools = ClinicToolsClient(CLINIC_API_BASE)
     _intent_cache = SemanticCache()
     _fast_path = await _load_fast_path()
@@ -4118,8 +4416,9 @@ async def run_text_turn(session, text: str) -> None:
     await answer_turn(session, text, source="message")
 
 
-async def _dispatch_turn(session: CallSession, utterance_wav: str,
-                         text_override: str | None = None, text_source: str = "keypad"):
+async def _dispatch_turn(
+    session: CallSession, utterance_wav: str, text_override: str | None = None, text_source: str = "keypad"
+):
     """_dispatch_turn_inner, with any exception it raises recorded rather
     than left to become dead air.
 
@@ -4143,8 +4442,9 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str,
             await _speak(session, SYSTEM_UNREACHABLE_BN, fallback_reason="tool_failure")
 
 
-async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
-                    text_override: str | None = None, text_source: str = "keypad"):
+async def _dispatch_turn_inner(
+    session: CallSession, utterance_wav: str, text_override: str | None = None, text_source: str = "keypad"
+):
     """One full turn: ASR -> intent -> tool -> templated reply -> TTS.
     Serialized per-call via session.dispatch_lock so replies never
     interleave, even if the caller starts talking again immediately.
@@ -4162,8 +4462,9 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         # IS the secret -- a PIN or a date of birth. Withheld from the record
         # exactly as clinic-api's disclosure_audit withholds it; the length is
         # kept so the record still shows an answer was given.
-        secret = ("verification_answer"
-                  if (session.pending or {}).get("awaiting") == "history_verify" else None)
+        secret = (
+            "verification_answer" if (session.pending or {}).get("awaiting") == "history_verify" else None
+        )
 
         if text_override is not None:
             text = text_override.strip()
@@ -4199,16 +4500,18 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # feature rather than surfacing.
                 echo_ref = getattr(session, "take_echo_reference", lambda: None)()
                 if echo_ref is not None and ECHO_CFG.echo_suppression_enabled:
-                    await asyncio.to_thread(
-                        _suppress_echo_in_place, utterance_wav, echo_ref)
+                    await asyncio.to_thread(_suppress_echo_in_place, utterance_wav, echo_ref)
 
                 try:
                     conditioned = await asyncio.to_thread(condition_wav_file, utterance_wav)
                     quality = conditioned.quality
                     logger.info(
                         "[%s] clip: %.2fs snr=%.1fdB speech=%.0f%% gain=%+.1fdB %s%s",
-                        session.call_id, quality.duration_s, quality.snr_db,
-                        100 * quality.speech_ratio, conditioned.gain_db,
+                        session.call_id,
+                        quality.duration_s,
+                        quality.snr_db,
+                        100 * quality.speech_ratio,
+                        conditioned.gain_db,
                         quality.bucket(),
                         "" if quality.usable else f" REJECT{list(quality.reasons)}",
                     )
@@ -4217,17 +4520,18 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     # whole service down to "sorry, say again" on every turn;
                     # an unconditioned clip still transcribes, which is the
                     # behaviour that shipped before this stage existed.
-                    logger.warning("[%s] conditioning failed (%s) -- sending raw clip",
-                                   session.call_id, e)
+                    logger.warning("[%s] conditioning failed (%s) -- sending raw clip", session.call_id, e)
                     audit.error("audio_conditioning", e, handled=True, fail_open=True)
 
                 if quality is not None and not quality.usable:
-                    audit.transcript(None, source="speech", status="rejected_low_quality",
-                                     audio=call_audit.describe_quality(quality))
-                    METRICS.record_turn(quality, success=False,
-                                        path=session.echo.reporting_path())
-                    await _clarify_or_offer_keypad(
-                        session, quality, reason=quality.reasons[0])
+                    audit.transcript(
+                        None,
+                        source="speech",
+                        status="rejected_low_quality",
+                        audio=call_audit.describe_quality(quality),
+                    )
+                    METRICS.record_turn(quality, success=False, path=session.echo.reporting_path())
+                    await _clarify_or_offer_keypad(session, quality, reason=quality.reasons[0])
                     return
 
                 # asr_gate bounds how many turns may occupy a thread-pool worker
@@ -4249,23 +4553,29 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # and which stage failed to understand them is our problem,
                 # not theirs.
                 logger.info("[%s] ASR returned empty text", session.call_id)
-                audit.transcript("", source="speech", status="empty",
-                                 decoder_used=getattr(asr_result, "decoder_used", None),
-                                 audio=call_audit.describe_quality(quality))
+                audit.transcript(
+                    "",
+                    source="speech",
+                    status="empty",
+                    decoder_used=getattr(asr_result, "decoder_used", None),
+                    audio=call_audit.describe_quality(quality),
+                )
                 if quality is not None:
-                    METRICS.record_turn(quality, success=False,
-                                        path=session.echo.reporting_path())
+                    METRICS.record_turn(quality, success=False, path=session.echo.reporting_path())
                 await _clarify_or_offer_keypad(session, quality, reason="asr_empty")
                 return
 
             if quality is not None:
-                METRICS.record_turn(quality, success=True,
-                                    path=session.echo.reporting_path())
+                METRICS.record_turn(quality, success=True, path=session.echo.reporting_path())
             session.failures.record_success()
-            audit.transcript(text, source="speech", redacted=secret,
-                             decoder_used=getattr(asr_result, "decoder_used", None),
-                             decoder_agreement=getattr(asr_result, "decoder_agreement", None),
-                             audio=call_audit.describe_quality(quality))
+            audit.transcript(
+                text,
+                source="speech",
+                redacted=secret,
+                decoder_used=getattr(asr_result, "decoder_used", None),
+                decoder_agreement=getattr(asr_result, "decoder_agreement", None),
+                audio=call_audit.describe_quality(quality),
+            )
 
         await session.send_json("User", text)
 
@@ -4284,10 +4594,8 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         # language.
         switched = lang_mod.requested_switch(text)
         if switched and switched != session.lang:
-            logger.info("[%s] caller switched language: %s -> %s",
-                        session.call_id, session.lang, switched)
-            audit.intent("language_switch", "keyword", language_from=session.lang,
-                         language_to=switched)
+            logger.info("[%s] caller switched language: %s -> %s", session.call_id, session.lang, switched)
+            audit.intent("language_switch", "keyword", language_from=session.lang, language_to=switched)
             session.lang = switched
             await _speak(session, language_switch_reply(session.lang))
             return
@@ -4297,8 +4605,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
             # language this pod has no ASR checkpoint for will otherwise ask
             # again, and again, burning turns on a line that can never say
             # yes -- see agent/language.py's enabled().
-            logger.info("[%s] caller asked for unavailable language %s",
-                        session.call_id, unavailable)
+            logger.info("[%s] caller asked for unavailable language %s", session.call_id, unavailable)
             audit.intent("language_unavailable", "keyword", requested=unavailable)
             await _speak(session, language_unavailable_reply(session.lang))
             return
@@ -4323,21 +4630,19 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         # %.2f would raise on None, and printing 0.00 there would be the same
         # lie the sentinel used to tell.
         _agree = asr_result.decoder_agreement
-        logger.info("[%s] asr agreement=%s decoder=%s words=%d/%d zone=%s",
-                    session.call_id,
-                    "n/a" if _agree is None else f"{_agree:.2f}",
-                    asr_result.decoder_used,
-                    getattr(asr_result, "ctc_words", 0),
-                    getattr(asr_result, "rnnt_words", 0),
-                    turn_zone)
+        logger.info(
+            "[%s] asr agreement=%s decoder=%s words=%d/%d zone=%s",
+            session.call_id,
+            "n/a" if _agree is None else f"{_agree:.2f}",
+            asr_result.decoder_used,
+            asr_result.ctc_words,
+            asr_result.rnnt_words,
+            turn_zone,
+        )
         # Structured export for the correlation study. Signal and join key
         # only -- never the transcript. See agent/turn_log.py.
         turn_log.record(
-            session.call_id,
-            getattr(session, "utt_seq", 0),
-            asr_result,
-            turn_zone,
-            call_state=getattr(session, "call_state", None),
+            session.call_id, session.utt_seq, asr_result, turn_zone, call_state=session.call_state
         )
 
         if turn_zone == confidence.REJECT:
@@ -4359,7 +4664,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         resumed_from_confirm = False
         if session.pending and session.pending.get("awaiting") == "confirm_transcript":
             echoed = session.pending
-            session.pending = echoed.get("resume")   # put the real flow back
+            session.pending = echoed.get("resume")  # put the real flow back
             if is_affirmative(text):
                 # Confirmed. Continue this turn with what was originally heard,
                 # not with the word "yes".
@@ -4375,8 +4680,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # again rather than answering. Treat this utterance as a fresh
                 # turn: it carries its own confidence score and gets judged on
                 # its own merits below.
-                logger.info("[%s] transcript echo answered with a restatement",
-                            session.call_id)
+                logger.info("[%s] transcript echo answered with a restatement", session.call_id)
 
         # ---- criterion 1: below the floor, check before acting -------------
         # The decoders disagreed enough that acting on this transcript would be
@@ -4387,26 +4691,28 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         # captured, so a name misheard three turns earlier is confirmed by a
         # caller who hears their own answer echoed correctly.
         skip_zones = ("confirm_transcript", "confirm_booking")
-        already_confirming = bool(session.pending) and \
-            session.pending.get("awaiting") in skip_zones
-        if turn_zone == confidence.CONFIRM and not resumed_from_confirm \
-                and not already_confirming:
+        already_confirming = bool(session.pending) and session.pending.get("awaiting") in skip_zones
+        if turn_zone == confidence.CONFIRM and not resumed_from_confirm and not already_confirming:
             session.confirm_attempts += 1
             if session.confirm_attempts > 2:
                 # Three in a row means the line, not the utterance, is the
                 # problem. Offer a human rather than ask a fourth time.
-                logger.info("[%s] repeated low-agreement turns -- offering handoff",
-                            session.call_id)
+                logger.info("[%s] repeated low-agreement turns -- offering handoff", session.call_id)
                 session.confirm_attempts = 0
-                await _speak(session, "লাইনটা পরিষ্কার শোনা যাচ্ছে না। "
-                                      "কাউন্টারে একবার কথা বলে নিলে ভালো হয়।")
+                await _speak(session, "লাইনটা পরিষ্কার শোনা যাচ্ছে না। কাউন্টারে একবার কথা বলে নিলে ভালো হয়।")
                 return
-            logger.info("[%s] echoing transcript for confirmation (attempt %d)",
-                        session.call_id, session.confirm_attempts)
+            logger.info(
+                "[%s] echoing transcript for confirmation (attempt %d)",
+                session.call_id,
+                session.confirm_attempts,
+            )
             session.pending = {
-                "awaiting": "confirm_transcript", "slots": {}, "candidates": None,
-                "offered_date": None, "retries": 0,
-                "heard": text,             # replayed verbatim once confirmed
+                "awaiting": "confirm_transcript",
+                "slots": {},
+                "candidates": None,
+                "offered_date": None,
+                "retries": 0,
+                "heard": text,  # replayed verbatim once confirmed
                 "resume": session.pending,  # the flow this interrupted
             }
             await _speak(session, heard_confirm_prompt(text))
@@ -4460,8 +4766,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         # this merge.
         parts = turn_parts.normalise(data)
         if turn_parts.is_multi(parts):
-            logger.info("[%s] %d-part turn: %s", session.call_id, len(parts),
-                        [p["intent"] for p in parts])
+            logger.info("[%s] %d-part turn: %s", session.call_id, len(parts), [p["intent"] for p in parts])
             if not await _run_parts(session, text, parts):
                 await _drain_deferred(session, text)
             return
@@ -4493,8 +4798,12 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         if ambiguous_kind:
             candidates = list(_state.slot_for(ambiguous_kind).names)
             session.pending = {
-                "awaiting": "follow_up_clarification", "intent": intent, "slots": slots,
-                "kind": ambiguous_kind, "candidates": candidates, "retries": 0,
+                "awaiting": "follow_up_clarification",
+                "intent": intent,
+                "slots": slots,
+                "kind": ambiguous_kind,
+                "candidates": candidates,
+                "retries": 0,
             }
             await _speak(session, ambiguous_reference_reply(ambiguous_kind, candidates, language=language))
             return
@@ -4544,10 +4853,24 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
         try:
             if intent == "test_rate":
                 if not slots.get("test_name"):
+                    # FIXED -- this used to call _speak_fact(..., results, ...)
+                    # with an undefined `results` and a not-yet-defined
+                    # `result` (both flagged by the gate's typecheck/lint
+                    # checks as undefined names). _speak_fact() exists to
+                    # speak a FETCHED fact and run it through the answer
+                    # ledger/near-match logic -- there is no fact yet here,
+                    # only a missing slot, so this is a plain ask-again
+                    # prompt like every other missing-slot branch below.
                     await _speak(session, missing_slot_prompt(intent, "test_name", language=language))
                     return
                 result = await _tools.get_test_rate(slots["test_name"])
-                await _speak(session, test_rate_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    test_rate_reply(slots, result, language=language),
+                )
                 _remember_primary_entity(session, intent, slots, result)
 
             elif intent == "test_sample":
@@ -4665,16 +4988,22 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 for field in ("test_name", "insurance_provider_name"):
                     if slots.get(field):
                         merged[field] = slots[field]
-                missing = next((f for f in ("test_name", "insurance_provider_name") if not merged.get(f)), None)
+                missing = next(
+                    (f for f in ("test_name", "insurance_provider_name") if not merged.get(f)), None
+                )
                 if missing:
                     session.pending = {
-                        "awaiting": "insurance_coverage_slot", "slots": merged,
-                        "missing_field": missing, "retries": 0,
+                        "awaiting": "insurance_coverage_slot",
+                        "slots": merged,
+                        "missing_field": missing,
+                        "retries": 0,
                     }
                     await _speak(session, missing_slot_prompt(intent, missing, language=language))
                     return
                 session.pending = None
-                result = await _tools.get_insurance_coverage(merged["test_name"], merged["insurance_provider_name"])
+                result = await _tools.get_insurance_coverage(
+                    merged["test_name"], merged["insurance_provider_name"]
+                )
                 await _speak(session, insurance_coverage_reply(merged, result, language=language))
 
             elif intent == "compare_options":
@@ -4695,19 +5024,29 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 for field in ("compare_option_a", "compare_option_b"):
                     if slots.get(field):
                         merged[field] = slots[field]
-                missing = next((f for f in ("compare_option_a", "compare_option_b") if not merged.get(f)), None)
+                missing = next(
+                    (f for f in ("compare_option_a", "compare_option_b") if not merged.get(f)), None
+                )
                 if missing:
                     session.pending = {
-                        "awaiting": "compare_options_slot", "slots": merged,
-                        "missing_field": missing, "retries": 0,
+                        "awaiting": "compare_options_slot",
+                        "slots": merged,
+                        "missing_field": missing,
+                        "retries": 0,
                     }
                     await _speak(session, missing_slot_prompt(intent, missing, language=language))
                     return
                 session.pending = None
                 name_a, name_b = merged["compare_option_a"], merged["compare_option_b"]
-                entity_a, entity_b = await _resolve_comparable_entity(name_a), await _resolve_comparable_entity(name_b)
+                entity_a, entity_b = (
+                    await _resolve_comparable_entity(name_a),
+                    await _resolve_comparable_entity(name_b),
+                )
                 comparison = build_comparison(entity_a, entity_b)
-                await _speak(session, compare_options_reply(name_a, name_b, entity_a, entity_b, comparison, language=language))
+                await _speak(
+                    session,
+                    compare_options_reply(name_a, name_b, entity_a, entity_b, comparison, language=language),
+                )
                 _remember_compared_entities(session, entity_a, entity_b)
 
             elif intent == "billing_balance":
@@ -4733,12 +5072,16 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 phone = parse_phone(slots.get("phone") or "")
                 if not phone:
                     session.pending = {
-                        "awaiting": "report_phone", "flow": "report_status",
-                        "test_name": slots.get("test_name"), "retries": 0,
+                        "awaiting": "report_phone",
+                        "flow": "report_status",
+                        "test_name": slots.get("test_name"),
+                        "retries": 0,
                     }
                     await _speak(session, missing_slot_prompt(intent, "phone", language=language))
                     return
-                await _handle_report_lookup(session, phone, slots.get("test_name"), "report_status", language=language)
+                await _handle_report_lookup(
+                    session, phone, slots.get("test_name"), "report_status", language=language
+                )
 
             elif intent == "report_send":
                 # ADDED BY SOURAV -- same identity-by-phone gate as
@@ -4752,15 +5095,22 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 phone = parse_phone(slots.get("phone") or "")
                 if not phone:
                     session.pending = {
-                        "awaiting": "report_phone", "flow": "report_send",
-                        "test_name": slots.get("test_name"), "retries": 0,
+                        "awaiting": "report_phone",
+                        "flow": "report_send",
+                        "test_name": slots.get("test_name"),
+                        "retries": 0,
                     }
                     await _speak(session, missing_slot_prompt(intent, "phone", language=language))
                     return
-                await _handle_report_lookup(session, phone, slots.get("test_name"), "report_send", language=language)
+                await _handle_report_lookup(
+                    session, phone, slots.get("test_name"), "report_send", language=language
+                )
 
             elif intent == "doctor_availability":
                 if not slots.get("doctor_name"):
+                    # FIXED -- same undefined-name bug as the test_rate
+                    # branch above (_speak_fact called with no fact yet:
+                    # undefined `results`, not-yet-defined `result`).
                     await _speak(session, missing_slot_prompt(intent, "doctor_name", language=language))
                     return
                 # Default to TODAY, not "whenever next available": a bare
@@ -4773,7 +5123,13 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # instead of "not today, but they're on Tuesdays" etc.
                 date_iso = slots.get("date") or datetime.date.today().isoformat()
                 result = await _tools.get_doctor_availability(slots["doctor_name"], date_iso)
-                await _speak(session, doctor_availability_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    doctor_availability_reply(slots, result, language=language),
+                )
                 _remember_primary_entity(session, intent, slots, result)
 
                 # Keep the flow open for "yes, book that day" / "another
@@ -4781,12 +5137,20 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # that question. See _continue_pending's "date" state.
                 offered = None
                 if result.get("found"):
-                    offered = result.get("date") if result.get("available") else result.get("next_available_date")
-                session.pending = {
-                    "awaiting": "date",
-                    "slots": {"doctor_name": result.get("doctor_name") or slots["doctor_name"]},
-                    "candidates": None, "offered_date": offered, "retries": 0,
-                } if offered else None
+                    offered = (
+                        result.get("date") if result.get("available") else result.get("next_available_date")
+                    )
+                session.pending = (
+                    {
+                        "awaiting": "date",
+                        "slots": {"doctor_name": result.get("doctor_name") or slots["doctor_name"]},
+                        "candidates": None,
+                        "offered_date": offered,
+                        "retries": 0,
+                    }
+                    if offered
+                    else None
+                )
 
             elif intent == "doctor_schedule":
                 # ADDED BY SOURAV -- "Caller asks when a doctor sits" story.
@@ -4811,10 +5175,19 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # it would mean touching doctor_availability's identical
                 # gap too, which is out of this story's scope.
                 if not slots.get("doctor_name"):
-                    await _speak(session, missing_slot_prompt(intent, "doctor_name", language=language))
+                    await _speak(
+                        session,
+                        missing_slot_prompt(intent, "doctor_name", language=language),
+                    )
                     return
+
                 result = await _tools.get_doctor_schedule(slots["doctor_name"])
-                await _speak(session, doctor_schedule_reply(slots, result, language=language))
+
+                await _speak(
+                    session,
+                    doctor_schedule_reply(slots, result, language=language),
+                )
+
                 _remember_primary_entity(session, intent, slots, result)
 
             elif intent == "doctors_by_department":
@@ -4830,7 +5203,13 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 # bypasses this (used as-is below).
                 date_iso = slots.get("date") or datetime.date.today().isoformat()
                 result = await _tools.get_doctors_by_department(slots["department"], date_iso)
-                await _speak(session, doctors_by_department_reply(slots, result, language=language))
+                await _speak_fact(
+                    session,
+                    intent,
+                    slots,
+                    result,
+                    doctors_by_department_reply(slots, result, language=language),
+                )
 
                 # Continue straight into booking: offer the doctors just
                 # listed as candidates, so the caller's very next utterance
@@ -4843,8 +5222,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                         "awaiting": "doctor_choice",
                         "slots": {},
                         "candidates": [
-                            {"name": d["name"], "name_bn": d.get("doctor_name_bn")}
-                            for d in result["doctors"]
+                            {"name": d["name"], "name_bn": d.get("doctor_name_bn")} for d in result["doctors"]
                         ],
                         "offered_date": date_iso,
                         "retries": 0,
@@ -4861,7 +5239,9 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     session.pending = {
                         "awaiting": "department_date",
                         "slots": {"department": slots["department"]},
-                        "candidates": None, "offered_date": None, "retries": 0,
+                        "candidates": None,
+                        "offered_date": None,
+                        "retries": 0,
                     }
                 else:
                     session.pending = None
@@ -4883,8 +5263,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     try:
                         result = await _tools.get_test_rate(slots["test_name"])
                     except ToolCallError as e:
-                        logger.warning("[%s] rate lookup failed during payment reply: %s",
-                                       session.call_id, e)
+                        logger.warning("[%s] rate lookup failed during payment reply: %s", session.call_id, e)
                 await _speak(session, payment_reply(slots, result, session.lang))
 
             elif intent == "report_collection":
@@ -4897,8 +5276,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     try:
                         result = await _tools.get_test_rate(slots["test_name"])
                     except ToolCallError as e:
-                        logger.warning("[%s] rate lookup failed during report reply: %s",
-                                       session.call_id, e)
+                        logger.warning("[%s] rate lookup failed during report reply: %s", session.call_id, e)
                 await _speak(session, report_collection_reply(slots, result, session.lang))
 
             elif intent == "patient_history":
@@ -4910,8 +5288,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 else:
                     # A number this call was already given is reused, not
                     # asked for again.
-                    await _start_history_verification(
-                        session, slots.get("phone") or session.history_phone)
+                    await _start_history_verification(session, slots.get("phone") or session.history_phone)
 
             elif intent == "my_bookings":
                 # A SINGLE PATIENT TIMELINE. The same rule as history above:
@@ -4922,8 +5299,8 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     await _speak_bookings(session)
                 else:
                     await _start_history_verification(
-                        session, slots.get("phone") or session.history_phone,
-                        PURPOSE_BOOKINGS)
+                        session, slots.get("phone") or session.history_phone, PURPOSE_BOOKINGS
+                    )
 
             elif intent == "book_appointment":
                 # Merge onto whatever session.pending already knows (e.g. a
@@ -4951,8 +5328,7 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     # _finish_booking()'s own docstring), so it skips
                     # straight to the write rather than a spoken readback.
                     if from_record:
-                        await _finish_booking(session, merged, from_record=True,
-                                              language=language)
+                        await _finish_booking(session, merged, from_record=True, language=language)
                         return
                     # A caller who gave all 5 fields in one breath still
                     # gets the pre-write readback -- this is the SAME gap
@@ -4961,15 +5337,21 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     # exactly as capable of a misheard phone digit as one
                     # collected field-by-field.
                     session.pending = {
-                        "awaiting": "confirm_booking", "slots": merged, "candidates": None,
-                        "offered_date": (session.pending or {}).get("offered_date"), "retries": 0,
+                        "awaiting": "confirm_booking",
+                        "slots": merged,
+                        "candidates": None,
+                        "offered_date": (session.pending or {}).get("offered_date"),
+                        "retries": 0,
                     }
                     await _speak(session, booking_confirmation_prompt(merged, language=language))
                     return
 
                 session.pending = {
-                    "awaiting": missing, "slots": merged, "candidates": None,
-                    "offered_date": (session.pending or {}).get("offered_date"), "retries": 0,
+                    "awaiting": missing,
+                    "slots": merged,
+                    "candidates": None,
+                    "offered_date": (session.pending or {}).get("offered_date"),
+                    "retries": 0,
                     "from_record": from_record,
                 }
                 await _speak(session, missing_slot_prompt(intent, missing, language=language))
@@ -4996,11 +5378,15 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                 hours_result = await _tools.get_clinic_info()
                 hours = hours_result.get("hours") if hours_result.get("found") else None
                 availability = check_callback_availability(
-                    hours, datetime.date.today().weekday(),
-                    datetime.datetime.now().strftime("%H:%M"), CALLBACKS_ENABLED,
+                    hours,
+                    datetime.date.today().weekday(),
+                    datetime.datetime.now().strftime("%H:%M"),
+                    CALLBACKS_ENABLED,
                 )
                 if not availability["available"]:
-                    await _speak(session, callback_unavailable_reply(availability["reason"], language=language))
+                    await _speak(
+                        session, callback_unavailable_reply(availability["reason"], language=language)
+                    )
                     return
 
                 # Merge onto whatever session.pending already knows, same
@@ -5040,15 +5426,21 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
                     # used" discipline as book_appointment's own
                     # confirm_booking state just above.
                     session.pending = {
-                        "awaiting": "confirm_callback", "slots": merged, "candidates": None,
-                        "offered_date": None, "retries": 0,
+                        "awaiting": "confirm_callback",
+                        "slots": merged,
+                        "candidates": None,
+                        "offered_date": None,
+                        "retries": 0,
                     }
                     await _speak(session, callback_confirmation_prompt(merged, language=language))
                     return
 
                 session.pending = {
-                    "awaiting": missing, "slots": merged, "candidates": None,
-                    "offered_date": None, "retries": 0,
+                    "awaiting": missing,
+                    "slots": merged,
+                    "candidates": None,
+                    "offered_date": None,
+                    "retries": 0,
                 }
                 await _speak(session, missing_slot_prompt("request_callback", missing, language=language))
 
@@ -5089,8 +5481,9 @@ async def _dispatch_turn_inner(session: CallSession, utterance_wav: str,
 
         except ToolCallError as e:
             logger.error("[%s] clinic API call failed: %s", session.call_id, e)
-            await _speak(session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।",
-                         fallback_reason="tool_failure")
+            await _speak(
+                session, "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।", fallback_reason="tool_failure"
+            )
 
 
 # ADDED BY SOURAV -- "Caller asks two questions in one breath" story. Sets
@@ -5329,8 +5722,12 @@ async def _dispatch_multi_intent_turn(session: CallSession, intents_list: list[d
         try:
             fragment = await _resolve_combinable_intent_fragment(intent, slots, language)
         except ToolCallError as e:
-            logger.error("[%s] clinic API call failed for intent %s (multi-intent turn): %s",
-                         session.call_id, intent, e)
+            logger.error(
+                "[%s] clinic API call failed for intent %s (multi-intent turn): %s",
+                session.call_id,
+                intent,
+                e,
+            )
             fragment = "এই মুহূর্তে দেখতে পারছি না। কাউন্টারে যোগাযোগ করুন, দয়া করে।"
         if fragment:
             fragments.append(fragment)
@@ -5358,8 +5755,7 @@ async def _resync_after_playback(session: CallSession) -> bool:
     processed_until_s anchored to real time instead of drifting a full
     reply behind, which is what made later turns surface late."""
     buffer_end_s = session.audio.duration_s
-    session.processed_until_s = max(session.processed_until_s,
-                                    buffer_end_s - RESYNC_REWIND_S)
+    session.processed_until_s = max(session.processed_until_s, buffer_end_s - RESYNC_REWIND_S)
     session.resync_pending = False
     logger.info("[%s] resynced to %.2fs after playback", session.call_id, session.processed_until_s)
     return True
@@ -5408,8 +5804,7 @@ async def _check_barge_in(session: CallSession) -> bool:
     # wall-clock the reply was timestamped with. Any skew between that clock
     # and the capture buffer is absorbed by the lag search inside assess().
     now_s = session.call_time_s()
-    verdict = await asyncio.to_thread(
-        session.echo.assess, samples, now_s - ECHO_CFG.barge_in_window_s, sr)
+    verdict = await asyncio.to_thread(session.echo.assess, samples, now_s - ECHO_CFG.barge_in_window_s, sr)
 
     if not verdict.is_barge_in:
         return False
@@ -5419,8 +5814,9 @@ async def _check_barge_in(session: CallSession) -> bool:
     logger.info("[%s] barge-in: %s", session.call_id, verdict.as_dict())
     # The reply in flight was cut off: the AGENT_RESPONSE before this event
     # was NOT heard in full, and the record must not imply it was.
-    _audit(session).record(call_audit.AGENT_INTERRUPTED,
-                           {"at_call_s": round(now_s, 3), "verdict": verdict.as_dict()})
+    _audit(session).record(
+        call_audit.AGENT_INTERRUPTED, {"at_call_s": round(now_s, 3), "verdict": verdict.as_dict()}
+    )
 
     # Tell the client to stop playing immediately. Without this the agent
     # keeps talking into the caller's interruption -- the gate would be open
@@ -5482,13 +5878,14 @@ async def _turn_poll_loop(session: CallSession):
         # opens the gate early; our own echo still does not.
         if session.agent_speaking:
             if await _check_barge_in(session):
-                pass          # gate opened by barge_in(); fall through and
-                              # detect the caller's turn from the same audio
+                pass  # gate opened by barge_in(); fall through and
+                # detect the caller's turn from the same audio
             elif time.time() < session.speak_deadline:
                 continue
             else:
-                logger.warning("[%s] no playback-done from client, releasing gate on deadline",
-                               session.call_id)
+                logger.warning(
+                    "[%s] no playback-done from client, releasing gate on deadline", session.call_id
+                )
                 session.release_gate()
 
         if session.resync_pending:
@@ -5524,7 +5921,10 @@ async def _turn_poll_loop(session: CallSession):
         )
         session.utt_seq += 1
         utterance_wav = await _slice_utterance(
-            session, absolute_start_s, absolute_end_s, session.utt_seq,
+            session,
+            absolute_start_s,
+            absolute_end_s,
+            session.utt_seq,
         )
         # Still advances to the END, not the start: the skipped lead-in is
         # consumed, not left behind for the next poll to re-examine.
@@ -5566,10 +5966,13 @@ async def _handle_control(session: CallSession, raw: str):
         session.declared_rate = rate
         session.audio.sample_rate = rate
         if rate != SAMPLE_RATE:
-            logger.warning("[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
-                           session.call_id, rate, SAMPLE_RATE)
-        logger.info("[%s] transport: %s @ %dHz", session.call_id,
-                    msg.get("format", "pcm_s16le"), rate)
+            logger.warning(
+                "[%s] client capturing at %dHz, not %dHz -- resampling per utterance",
+                session.call_id,
+                rate,
+                SAMPLE_RATE,
+            )
+        logger.info("[%s] transport: %s @ %dHz", session.call_id, msg.get("format", "pcm_s16le"), rate)
     elif msg.get("type") == "audio_mode":
         # A hint only. EchoGuard treats it as a starting point and lets the
         # measured Echo Return Loss override it, because a hint can be absent
@@ -5607,8 +6010,7 @@ async def _speak_closing(session: CallSession, *, include_goodbye: bool = True) 
         return
     session.closing_spoken = True
     outcomes = getattr(session.audit, "outcomes", None) or call_script.CallOutcomes()
-    for line in call_script.closing(outcomes, session.pending, session.lang,
-                                    include_goodbye=include_goodbye):
+    for line in call_script.closing(outcomes, session.pending, session.lang, include_goodbye=include_goodbye):
         await _speak(session, line)
 
 
@@ -5656,14 +6058,13 @@ async def _reject_at_capacity(ws: WebSocket):
     A refused caller is still a caller, and the busiest minutes are exactly
     when a hospital will want to know how many were turned away -- so the
     refusal gets a call record of its own (final_status "rejected")."""
-    audit = call_audit.CallAudit(_audit_store, transport=AUDIT_TRANSPORT,
-                                 language=lang_mod.default_lang())
-    logger.warning("[%s] at capacity (%d/%d active) -- refusing call",
-                   audit.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+    audit = call_audit.CallAudit(_audit_store, transport=AUDIT_TRANSPORT, language=lang_mod.default_lang())
+    logger.warning(
+        "[%s] at capacity (%d/%d active) -- refusing call", audit.call_id, _active_calls, MAX_CONCURRENT_CALLS
+    )
     delivered, audio = False, "none"
     with contextlib.suppress(Exception):
-        await ws.send_text(json.dumps({"sender": "AI", "text": BUSY_LINE},
-                                      ensure_ascii=False))
+        await ws.send_text(json.dumps({"sender": "AI", "text": BUSY_LINE}, ensure_ascii=False))
         delivered = True
     with contextlib.suppress(Exception):
         # Cache hit in the normal case (BUSY_LINE is prewarmed), so this does
@@ -5671,14 +6072,12 @@ async def _reject_at_capacity(ws: WebSocket):
         # entirely the text above already went out; audio is a bonus.
         await ws.send_bytes(await _tts.synthesize(BUSY_LINE))
         audio = "synthesized"
-    audit.agent_response(BUSY_LINE, lang=lang_mod.default_lang(), audio=audio,
-                         delivered=delivered)
+    audit.agent_response(BUSY_LINE, lang=lang_mod.default_lang(), audio=audio, delivered=delivered)
     # Give the client a moment to receive both frames before the close lands.
     await asyncio.sleep(0.25)
     with contextlib.suppress(Exception):
         await ws.close()
-    audit.end(call_audit.END_AT_CAPACITY, active_calls=_active_calls,
-              max_calls=MAX_CONCURRENT_CALLS)
+    audit.end(call_audit.END_AT_CAPACITY, active_calls=_active_calls, max_calls=MAX_CONCURRENT_CALLS)
 
 
 @app.websocket("/ws/audio")
@@ -5699,8 +6098,7 @@ async def ws_audio(ws: WebSocket):
     # ClinicToolsClient knows which call an API event belongs to, without two
     # concurrent calls ever seeing each other's. See agent/call_audit.py.
     call_audit.bind(session.audit)
-    logger.info("[%s] call started (%d/%d active)",
-                session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+    logger.info("[%s] call started (%d/%d active)", session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
     poll_task = asyncio.create_task(_turn_poll_loop(session))
     poll_task.add_done_callback(lambda t: _note_task_crash(session, "turn_poll_loop", t))
     # How the call ended, as observed here. The idle timeout overrides it via
@@ -5750,9 +6148,15 @@ async def ws_audio(ws: WebSocket):
         status = session.audit.end(
             session.end_reason or ending,
             pending_flow=(session.pending or {}).get("awaiting"),
-            language=session.lang)
-        logger.info("[%s] call ended (%d/%d active) -- %s",
-                    session.call_id, _active_calls, MAX_CONCURRENT_CALLS, status)
+            language=session.lang,
+        )
+        logger.info(
+            "[%s] call ended (%d/%d active) -- %s",
+            session.call_id,
+            _active_calls,
+            MAX_CONCURRENT_CALLS,
+            status,
+        )
 
 
 app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")

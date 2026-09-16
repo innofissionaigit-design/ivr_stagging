@@ -24,6 +24,7 @@ account rather than assumed:
    that bug, so the model is never allowed to state a number on its own;
    see main.py's _compose_reply().
 """
+
 from __future__ import annotations
 
 import json
@@ -96,8 +97,9 @@ _BACKOFF_JITTER_S = 0.25
 
 def _backoff_s(attempt: int) -> float:
     """Delay before the attempt AFTER this one. attempt is 1-based."""
-    return (min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S)
-            + random.uniform(0.0, _BACKOFF_JITTER_S))
+    return min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S) + random.uniform(
+        0.0, _BACKOFF_JITTER_S
+    )
 
 
 # ADDED BY SOURAV -- "Lab Report Status & Secure Delivery" combined story
@@ -156,45 +158,66 @@ def _backoff_s(attempt: int) -> float:
 # a new "info_topic" slot (added below) narrows which of the three the
 # reply actually speaks; left null when the caller asked generally, or
 # asked more than one at once, so nothing is left out.
-VALID_INTENTS = {"test_rate", "test_sample", "test_duration", "test_preparation", "doctor_availability", "doctor_schedule", "book_appointment", "doctors_by_department", "report_status", "report_send", "health_package", "clinic_info", "smalltalk", "unclear",
-                  # ADDED BY SOURAV -- Phase 1: Database Schema & Policy
-                  # Tables (Walk-in Eligibility, Prescription
-                  # Requirements, Insurance Coverage Policy, Outstanding
-                  # Balance / Billing stories).
-                  "walkin_eligibility", "prescription_requirements", "insurance_coverage", "billing_balance",
-                  # ADDED BY SOURAV -- "Caller asks something the agent
-                  # does not cover" story. Deliberately a SEPARATE intent
-                  # from "unclear" above -- see this module's own prompt
-                  # text below for the exact distinction (understood vs.
-                  # unintelligible) and main.py's dispatch branch for why
-                  # each gets a different reply/pending flow.
-                  "out_of_scope",
-                  # ADDED BY SOURAV -- "Caller asks the agent to compare two
-                  # options" story. See the intent description bullet below
-                  # and agent/compare_flow.py's module docstring for the
-                  # arithmetic/clinical-safety design.
-                  "compare_options",
-                  # ADDED BY SOURAV -- "Caller asks to be called back" story
-                  # (Evidence: "No outbound capability" -- this system
-                  # cannot itself place a call, so the only honest thing it
-                  # can do is log a request for a HUMAN to call back and say
-                  # so plainly). Reuses the EXISTING "phone" slot below (the
-                  # number to call back on -- same slot booking/report flows
-                  # already collect a phone number into) plus two genuinely
-                  # NEW slots, "callback_time_window" and "callback_reason"
-                  # (both added below). See main.py's dispatch branch and
-                  # agent/callback_flow.py's module docstring for the
-                  # availability-check and persistence design.
-                  "request_callback",
-                  # ADDED BY CHAKRAVARDHAN -- four intents from stories this
-                  # branch added independently of dev_sourav's (history
-                  # verification / patient timeline / message channel /
-                  # notifications work -- see clinic-api/history_service.py,
-                  # clinic-api/reminder_service.py, agent/message_service.py).
-                  # Real dispatch branches for all four already exist in
-                  # main.py/main_pcm.py (elif intent == ...), so dropping
-                  # them here would make the model unable to ever name them.
-                  "payment", "report_collection", "patient_history", "my_bookings"}
+VALID_INTENTS = {
+    "test_rate",
+    "test_sample",
+    "test_duration",
+    "test_preparation",
+    "doctor_availability",
+    "doctor_schedule",
+    "book_appointment",
+    "doctors_by_department",
+    "report_status",
+    "report_send",
+    "health_package",
+    "clinic_info",
+    "smalltalk",
+    "unclear",
+    # ADDED BY SOURAV -- Phase 1: Database Schema & Policy
+    # Tables (Walk-in Eligibility, Prescription
+    # Requirements, Insurance Coverage Policy, Outstanding
+    # Balance / Billing stories).
+    "walkin_eligibility",
+    "prescription_requirements",
+    "insurance_coverage",
+    "billing_balance",
+    # ADDED BY SOURAV -- "Caller asks something the agent
+    # does not cover" story. Deliberately a SEPARATE intent
+    # from "unclear" above -- see this module's own prompt
+    # text below for the exact distinction (understood vs.
+    # unintelligible) and main.py's dispatch branch for why
+    # each gets a different reply/pending flow.
+    "out_of_scope",
+    # ADDED BY SOURAV -- "Caller asks the agent to compare two
+    # options" story. See the intent description bullet below
+    # and agent/compare_flow.py's module docstring for the
+    # arithmetic/clinical-safety design.
+    "compare_options",
+    # ADDED BY SOURAV -- "Caller asks to be called back" story
+    # (Evidence: "No outbound capability" -- this system
+    # cannot itself place a call, so the only honest thing it
+    # can do is log a request for a HUMAN to call back and say
+    # so plainly). Reuses the EXISTING "phone" slot below (the
+    # number to call back on -- same slot booking/report flows
+    # already collect a phone number into) plus two genuinely
+    # NEW slots, "callback_time_window" and "callback_reason"
+    # (both added below). See main.py's dispatch branch and
+    # agent/callback_flow.py's module docstring for the
+    # availability-check and persistence design.
+    "request_callback",
+    # ADDED BY CHAKRAVARDHAN -- four intents from stories this
+    # branch added independently of dev_sourav's (history
+    # verification / patient timeline / message channel /
+    # notifications work -- see clinic-api/history_service.py,
+    # clinic-api/reminder_service.py, agent/message_service.py).
+    # Real dispatch branches for all four already exist in
+    # main.py/main_pcm.py (elif intent == ...), so dropping
+    # them here would make the model unable to ever name them.
+    "payment",
+    "report_collection",
+    "patient_history",
+    "my_bookings",
+}
 
 # story title: The model never originates a fact
 # user story: As a clinical lead, I want every price, date and identifier to
@@ -346,25 +369,42 @@ class ExtractionError(Exception):
 def _call_ollama(prompt: str, timeout_s: float = OLLAMA_TIMEOUT_S) -> str:
     # See OLLAMA_TIMEOUT_S / OLLAMA_TURN_BUDGET_S above for why this is no
     # longer the old cold-start-sized 90s.
-    payload = json.dumps({
-        "model": OLLAMA_MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.0},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.0},
+        }
+    ).encode("utf-8")
     req = urllib.request.Request(
-        OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"},
+        OLLAMA_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:
         body = json.loads(resp.read().decode("utf-8"))
     return body.get("response", "")
 
 
-_SLOT_KEYS = ("test_name", "doctor_name", "department", "date_expr", "date", "time_slot", "patient_name", "phone",
-              "package_name", "info_topic", "insurance_provider_name",
-              "compare_option_a", "compare_option_b",
-              "callback_time_window", "callback_reason")
+_SLOT_KEYS = (
+    "test_name",
+    "doctor_name",
+    "department",
+    "date_expr",
+    "date",
+    "time_slot",
+    "patient_name",
+    "phone",
+    "package_name",
+    "info_topic",
+    "insurance_provider_name",
+    "compare_option_a",
+    "compare_option_b",
+    "callback_time_window",
+    "callback_reason",
+)
 
 
 def _validate_one(intent, slots, errors: list[str], prefix: str = "") -> None:
@@ -473,8 +513,10 @@ def _validate(data: dict) -> tuple[bool, list[str]]:
         # now carries the caller's own spoken words, and a fabricated date
         # sitting in it would be indistinguishable from one they actually said.
         if isinstance(slots.get("date"), str) and _RE_ISO_DATE.search(slots["date"]):
-            logger.warning("model produced a calendar date %r -- dropped; it has no "
-                           "calendar, so this was invented", slots["date"])
+            logger.warning(
+                "model produced a calendar date %r -- dropped; it has no calendar, so this was invented",
+                slots["date"],
+            )
             slots["date"] = None
 
     fatal = [e for e in errors if "missing" not in e or "intent" in e or "slots: expected" in e]

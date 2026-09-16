@@ -24,6 +24,7 @@ Two things happen here before a single byte is synthesized:
    the hit rate on greetings, apologies and repeat questions is high. This
    is the cheapest latency win in the whole pipeline.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,6 +106,7 @@ class UnspeakableReply(Exception):
         self.text = text
         super().__init__(f"unspeakable spans would be dropped: {self.dropped}")
 
+
 FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback_audio")
 
 # Pre-recorded once (see README.md "Recording the fallback set") and
@@ -112,10 +114,10 @@ FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback
 # service is what's broken, asking it to synthesize its own apology is
 # exactly the failure this exists to route around.
 FALLBACK_FILES = {
-    "asr_empty": "sorry_repeat.wav",         # "দুঃখিত, শুনতে পাইনি, আবার বলুন"
-    "llm_failure": "system_busy.wav",         # "একটু সমস্যা হচ্ছে, একটু ধরুন"
-    "tool_failure": "check_failed.wav",       # "এখনই দেখতে পারছি না, স্টাফের কাছে দিচ্ছি"
-    "tts_failure": "system_busy.wav",         # reused -- see note below
+    "asr_empty": "sorry_repeat.wav",  # "দুঃখিত, শুনতে পাইনি, আবার বলুন"
+    "llm_failure": "system_busy.wav",  # "একটু সমস্যা হচ্ছে, একটু ধরুন"
+    "tool_failure": "check_failed.wav",  # "এখনই দেখতে পারছি না, স্টাফের কাছে দিচ্ছি"
+    "tts_failure": "system_busy.wav",  # reused -- see note below
 }
 
 # Spoken when the process is already at its concurrent-call ceiling and is
@@ -155,7 +157,7 @@ PREWARM_LINES = [
 # and confirmed it reads as considerate rather than sluggish. Same discipline
 # as the confidence floors: a reasoned number is a to-do, not a setting.
 SPEECH_RATE_SCALE = {
-    "default": None,        # let tts_server use its own DEFAULT_LENGTH_SCALE
+    "default": None,  # let tts_server use its own DEFAULT_LENGTH_SCALE
     "slow_normal": 1.26,
     "slow": 1.35,
 }
@@ -217,8 +219,9 @@ class TTSClient:
             while len(self._audio_cache) > AUDIO_CACHE_MAX:
                 self._audio_cache.popitem(last=False)
 
-    async def synthesize(self, text_bn: str, speech_rate: str = "default",
-                         language: str | None = None) -> bytes:
+    async def synthesize(
+        self, text_bn: str, speech_rate: str = "default", language: str | None = None
+    ) -> bytes:
         """Returns WAV bytes, or raises. Callers should catch and fall back
         to `fallback_audio()` -- see main.py's _speak().
 
@@ -254,8 +257,12 @@ class TTSClient:
             # the default threshold of every alerting rule anyone would write,
             # and the gap analysis's verdict on it was "a log nobody is reading
             # during a call". Stable event name so a rule can match on it.
-            logger.error("unspeakable_reply dropped=%s text_len=%d enforced=%s",
-                         list(verdict.dropped), len(text_bn), SPEAKABILITY_ENFORCE)
+            logger.error(
+                "unspeakable_reply dropped=%s text_len=%d enforced=%s",
+                list(verdict.dropped),
+                len(text_bn),
+                SPEAKABILITY_ENFORCE,
+            )
             if SPEAKABILITY_ENFORCE:
                 raise UnspeakableReply(verdict.dropped, text_bn)
 
@@ -316,8 +323,11 @@ class TTSClient:
                 async with _tts_gate:
                     r = await self._client.post(
                         self.base_url,
-                        json={"text": spoken, "lang": _lang_mod.resolve(language),
-                              "speed": SPEECH_RATE_SCALE.get(speech_rate)},
+                        json={
+                            "text": spoken,
+                            "lang": _lang_mod.resolve(language),
+                            "speed": SPEECH_RATE_SCALE.get(speech_rate),
+                        },
                     )
                 r.raise_for_status()
                 wav = r.content
@@ -326,8 +336,7 @@ class TTSClient:
             except httpx.ConnectError as e:
                 if attempt == max_attempts:
                     raise
-                logger.warning("TTS connect failed (attempt %d/%d), retrying: %s",
-                               attempt, max_attempts, e)
+                logger.warning("TTS connect failed (attempt %d/%d), retrying: %s", attempt, max_attempts, e)
                 await asyncio.sleep(0.5)
 
     # STORY [Answer Quality and Grounding]
@@ -348,11 +357,13 @@ class TTSClient:
         guard: _speak() falls back to that line when a reply is blocked, and
         this is what guarantees the fallback cannot be blocked in turn.
         """
-        bad = {line: speakability.check(line).dropped
-               for line in PREWARM_LINES if speakability.check(line).is_blocked}
+        bad = {
+            line: speakability.check(line).dropped
+            for line in PREWARM_LINES
+            if speakability.check(line).is_blocked
+        }
         if bad:
-            raise AssertionError(
-                f"canned lines contain spans the synthesizer would drop: {bad}")
+            raise AssertionError(f"canned lines contain spans the synthesizer would drop: {bad}")
 
     async def prewarm(self):
         """Best-effort: a failure here must not stop the app from starting.
@@ -397,6 +408,7 @@ class TTSClient:
         except FileNotFoundError:
             logger.error(
                 "Fallback audio %s missing -- call will go silent on this "
-                "failure path. Record it: see README.md.", path,
+                "failure path. Record it: see README.md.",
+                path,
             )
             return b""

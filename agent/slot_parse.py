@@ -23,6 +23,7 @@ using the same trust model as fast_path.py: return None whenever not
 confident, and let main.py re-prompt (or give up and fall back to a
 fresh LLM classification) rather than guess.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -41,26 +42,48 @@ _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
 _DIGITS = _lang.DIGITS_TO_ASCII
 
 _WEEKDAYS_BN = {
-    "সোমবার": 0, "সোম": 0,
-    "মঙ্গলবার": 1, "মঙ্গল": 1,
-    "বুধবার": 2, "বুধ": 2,
-    "বৃহস্পতিবার": 3, "বৃহস্পতি": 3, "বিহস্পতি": 3,
-    "শুক্রবার": 4, "শুক্র": 4,
-    "শনিবার": 5, "শনি": 5,
-    "রবিবার": 6, "রবি": 6,
+    "সোমবার": 0,
+    "সোম": 0,
+    "মঙ্গলবার": 1,
+    "মঙ্গল": 1,
+    "বুধবার": 2,
+    "বুধ": 2,
+    "বৃহস্পতিবার": 3,
+    "বৃহস্পতি": 3,
+    "বিহস্পতি": 3,
+    "শুক্রবার": 4,
+    "শুক্র": 4,
+    "শনিবার": 5,
+    "শনি": 5,
+    "রবিবার": 6,
+    "রবি": 6,
     # Hindi
-    "सोमवार": 0, "सोम": 0,
-    "मंगलवार": 1, "मंगल": 1,
-    "बुधवार": 2, "बुध": 2,
-    "गुरुवार": 3, "बृहस्पतिवार": 3, "गुरु": 3,
-    "शुक्रवार": 4, "शुक्र": 4,
-    "शनिवार": 5, "शनि": 5,
-    "रविवार": 6, "रवि": 6, "इतवार": 6,
+    "सोमवार": 0,
+    "सोम": 0,
+    "मंगलवार": 1,
+    "मंगल": 1,
+    "बुधवार": 2,
+    "बुध": 2,
+    "गुरुवार": 3,
+    "बृहस्पतिवार": 3,
+    "गुरु": 3,
+    "शुक्रवार": 4,
+    "शुक्र": 4,
+    "शनिवार": 5,
+    "शनि": 5,
+    "रविवार": 6,
+    "रवि": 6,
+    "इतवार": 6,
     # English. Full names only -- the three-letter forms ("sat", "sun",
     # "mon") are substrings of ordinary words and this table is
     # substring-matched.
-    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
-    "friday": 4, "saturday": 5, "sunday": 6,
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
 }
 
 # Bengali, Hindi and English share this table. Substring-matched, so the
@@ -70,24 +93,32 @@ _WEEKDAYS_BN = {
 # appointment cannot mean yesterday.
 _RELATIVE_DAYS = {
     # Bengali
-    "আজ": 0, "আজকে": 0, "আজকেই": 0,
-    "কাল": 1, "আগামীকাল": 1, "কালকে": 1,
-    "পরশু": 2, "পরশুদিন": 2,
+    "আজ": 0,
+    "আজকে": 0,
+    "আজকেই": 0,
+    "কাল": 1,
+    "আগামীকাল": 1,
+    "কালকে": 1,
+    "পরশু": 2,
+    "পরশুদিন": 2,
     # Hindi
-    "आज": 0, "आज ही": 0,
-    "कल": 1, "आने वाले कल": 1,
-    "परसों": 2, "परसो": 2,
+    "आज": 0,
+    "आज ही": 0,
+    "कल": 1,
+    "आने वाले कल": 1,
+    "परसों": 2,
+    "परसो": 2,
     # English
-    "today": 0, "tomorrow": 1, "day after tomorrow": 2,
+    "today": 0,
+    "tomorrow": 1,
+    "day after tomorrow": 2,
 }
 
 # Both tables above are matched as SUBSTRINGS, so they must be walked
 # longest-first or a short entry shadows a long one that contains it. Sorted
 # once at import rather than on every turn.
-_RELATIVE_DAYS_BY_LENGTH = tuple(sorted(_RELATIVE_DAYS.items(),
-                                        key=lambda kv: -len(kv[0])))
-_WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(),
-                                   key=lambda kv: -len(kv[0])))
+_RELATIVE_DAYS_BY_LENGTH = tuple(sorted(_RELATIVE_DAYS.items(), key=lambda kv: -len(kv[0])))
+_WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(), key=lambda kv: -len(kv[0])))
 
 # Kept deliberately small and exact-match only (see is_affirmative /
 # is_negative below) -- these gate whole-utterance decisions like "abandon
@@ -112,33 +143,102 @@ _WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(),
 # either.
 _AFFIRMATIVE = {
     # Bengali
-    "হ্যাঁ", "হ্যা", "হুম", "হুঁ", "ঠিক", "ঠিক আছে", "ওই দিন", "ওইদিন",
-    "সেদিন", "সেদিনই", "সেই দিন", "চলবে", "ওকে", "হবে",
+    "হ্যাঁ",
+    "হ্যা",
+    "হুম",
+    "হুঁ",
+    "ঠিক",
+    "ঠিক আছে",
+    "ওই দিন",
+    "ওইদিন",
+    "সেদিন",
+    "সেদিনই",
+    "সেই দিন",
+    "চলবে",
+    "ওকে",
+    "হবে",
     # Hindi
-    "हाँ", "हां", "जी", "जी हाँ", "ठीक", "ठीक है", "हूँ", "उसी दिन",
-    "वही दिन", "चलेगा", "ओके",
+    "हाँ",
+    "हां",
+    "जी",
+    "जी हाँ",
+    "ठीक",
+    "ठीक है",
+    "हूँ",
+    "उसी दिन",
+    "वही दिन",
+    "चलेगा",
+    "ओके",
     # English
-    "yes", "yeah", "yep", "yup", "correct", "right", "that's right",
-    "ok", "okay", "sure", "confirmed", "confirm", "that day",
-    "that works", "fine", "alright",
+    "yes",
+    "yeah",
+    "yep",
+    "yup",
+    "correct",
+    "right",
+    "that's right",
+    "ok",
+    "okay",
+    "sure",
+    "confirmed",
+    "confirm",
+    "that day",
+    "that works",
+    "fine",
+    "alright",
     # Hinglish / Banglish (Latin-script transliteration -- shared
     # vocabulary between the two, since both are "regional language +
     # English" code-switches)
-    "haan", "han", "haa", "thik ache", "thik achhe", "theek hai",
-    "sahi hai", "sob thik ache", "sob thik",
+    "haan",
+    "han",
+    "haa",
+    "thik ache",
+    "thik achhe",
+    "theek hai",
+    "sahi hai",
+    "sob thik ache",
+    "sob thik",
 }
 _NEGATIVE = {
     # Bengali
-    "না", "নাহ", "না না", "লাগবে না", "থাক", "দরকার নেই", "ইচ্ছা নেই",
-    "না থাক", "লাগবে নাহ",
+    "না",
+    "নাহ",
+    "না না",
+    "লাগবে না",
+    "থাক",
+    "দরকার নেই",
+    "ইচ্ছা নেই",
+    "না থাক",
+    "লাগবে নাহ",
     # Hindi
-    "नहीं", "ना", "नही", "नहीं चाहिए", "रहने दीजिए", "रहने दो",
-    "ज़रूरत नहीं", "जरूरत नहीं",
+    "नहीं",
+    "ना",
+    "नही",
+    "नहीं चाहिए",
+    "रहने दीजिए",
+    "रहने दो",
+    "ज़रूरत नहीं",
+    "जरूरत नहीं",
     # English
-    "no", "nope", "not correct", "wrong", "incorrect", "not right",
-    "not now", "no thanks", "no thank you", "leave it", "don't", "dont",
+    "no",
+    "nope",
+    "not correct",
+    "wrong",
+    "incorrect",
+    "not right",
+    "not now",
+    "no thanks",
+    "no thank you",
+    "leave it",
+    "don't",
+    "dont",
     # Hinglish / Banglish
-    "nahi", "nahin", "na", "galat", "thik na", "thik nei",
+    "nahi",
+    "nahin",
+    "na",
+    "galat",
+    "thik na",
+    "thik nei",
 }
 
 
@@ -238,8 +338,7 @@ def _bounded(word: str, text: str) -> bool:
     return re.search(rf"\b{re.escape(word)}\b", text) is not None
 
 
-def parse_date(text: str, today: datetime.date | None = None,
-                offered_date: str | None = None) -> str | None:
+def parse_date(text: str, today: datetime.date | None = None, offered_date: str | None = None) -> str | None:
     """-> ISO date string, or None if not confident.
 
     `offered_date` is the ISO date main.py already spoke out loud (e.g.
@@ -339,9 +438,23 @@ def parse_date(text: str, today: datetime.date | None = None,
 
 
 _HOUR_WORD_TO_NUM = {
-    "একটা": 1, "দুটো": 2, "দুইটা": 2, "তিনটে": 3, "তিনটা": 3, "চারটে": 4, "চারটা": 4,
-    "পাঁচটা": 5, "ছটা": 6, "ছয়টা": 6, "সাতটা": 7, "আটটা": 8, "নটা": 9, "নয়টা": 9,
-    "দশটা": 10, "এগারোটা": 11, "বারোটা": 12,
+    "একটা": 1,
+    "দুটো": 2,
+    "দুইটা": 2,
+    "তিনটে": 3,
+    "তিনটা": 3,
+    "চারটে": 4,
+    "চারটা": 4,
+    "পাঁচটা": 5,
+    "ছটা": 6,
+    "ছয়টা": 6,
+    "সাতটা": 7,
+    "আটটা": 8,
+    "নটা": 9,
+    "নয়টা": 9,
+    "দশটা": 10,
+    "এগারোটা": 11,
+    "বারোটা": 12,
 }
 
 # Bengali day-part words -> the 24h hours they cover, used only to decide
@@ -374,7 +487,7 @@ def _extract_hour12_after(t: str, prefix: str) -> int | None:
     idx = t.find(prefix)
     if idx == -1:
         return None
-    rest = t[idx + len(prefix):].lstrip()
+    rest = t[idx + len(prefix) :].lstrip()
     # The digit and টা/টার/টায় are written with NO space between them
     # ("সাড়ে ৭টা"), so a plain (?!\w) right after the digit would wrongly
     # reject it -- ট is a word character. Consume that suffix as PART of
@@ -458,8 +571,16 @@ def parse_time(text: str) -> str | None:
 # words are a separate, flagged, not-yet-closed gap, symmetric with the
 # same pre-existing limitation this already had for OTP entry).
 _DIGIT_WORDS = {
-    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
 }
 _DIGIT_WORD_RE = re.compile(r"\b(" + "|".join(_DIGIT_WORDS) + r")\b", re.IGNORECASE)
 
@@ -519,7 +640,8 @@ def parse_phone(text: str) -> str | None:
     """
     translated = text.translate(_DIGITS)
     words_resolved = _DIGIT_WORD_RE.sub(
-        lambda m: _DIGIT_WORDS[m.group(1).lower()], translated,
+        lambda m: _DIGIT_WORDS[m.group(1).lower()],
+        translated,
     )
     digits = re.sub(r"\D", "", words_resolved)
     if len(digits) < 10:
@@ -555,7 +677,8 @@ def parse_otp(text: str) -> str | None:
     """
     translated = text.translate(_BN_DIGITS)
     words_resolved = _DIGIT_WORD_RE.sub(
-        lambda m: _DIGIT_WORDS[m.group(1).lower()], translated,
+        lambda m: _DIGIT_WORDS[m.group(1).lower()],
+        translated,
     )
     digits = re.sub(r"\D", "", words_resolved)
     if len(digits) != 6:
@@ -576,9 +699,19 @@ def parse_otp(text: str) -> str | None:
 # caught by this.
 _OTP_WORDS = ("otp", "ওটিপি")
 _DISCLOSURE_ASK_WORDS = (
-    "tell", "what is", "what's", "read", "say",
-    "bolo", "bolun", "bata", "batao",
-    "বলো", "বলুন", "কী", "কি বল",
+    "tell",
+    "what is",
+    "what's",
+    "read",
+    "say",
+    "bolo",
+    "bolun",
+    "bata",
+    "batao",
+    "বলো",
+    "বলুন",
+    "কী",
+    "কি বল",
 )
 
 
