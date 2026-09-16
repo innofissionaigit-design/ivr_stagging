@@ -1,0 +1,10 @@
+# gitleaks rules for the quality gate. Author: Chakravardhan
+#
+# PROTECTED FILE. The default rule set, with NO allowlist: an allowlist is
+# the easiest way to make a secrets scan pass without removing the secret.
+# gate.sh scans a copy of the repository's own files (tracked and
+# untracked-but-not-ignored), so virtualenvs and caches are never scanned.
+title = "voice-bengali pre-human-review gate"
+
+[extend]
+useDefault = true

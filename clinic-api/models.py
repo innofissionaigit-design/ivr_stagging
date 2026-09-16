@@ -638,6 +638,45 @@ class Patient(Base):
         default=True,
     )
 
+    # ADDED BY CHAKRAVARDHAN -- "History disclosed only after verification"
+    # story. This branch independently defined its OWN second `class
+    # Patient(Base)` with `__tablename__ = "patients"` further down this
+    # file (see the "PATIENT IDENTITY AND HISTORY" section, where
+    # TestRecord/DisclosureAudit now live) -- two SQLAlchemy model classes
+    # mapping the same table name is not something git's line-based merge
+    # can see as a conflict (the two class bodies never touch the same
+    # lines), but it is a real one: SQLAlchemy would refuse to map both,
+    # and whichever "Patient" name Python bound last would silently shadow
+    # the other everywhere `reports`/`appointments` back_populates and
+    # every phone-lookup elsewhere in this file expect it. Folded in here
+    # instead, onto the one Patient class that LabReport.patient and
+    # Appointment.patient already back_populate against.
+    #
+    # `full_name` is kept as its own column, separate from `name` above,
+    # rather than renamed to it: clinic-api/verification.py and
+    # clinic-api/history_service.py (both unconflicted, outside this
+    # merge's 15 touched files) were not inspected here and may reference
+    # `full_name` specifically. Consolidating the two into one name field
+    # is a real follow-up, not a change to make blind in a merge.
+    full_name = Column(String, nullable=True)
+
+    # PBKDF2 of a 4-digit PIN, set at the counter. NEVER the PIN itself.
+    # See the (former) standalone Patient class's docstring, ported to
+    # this class's own docstring is future work -- the short version: an
+    # SMS OTP proves possession of the shared handset, not identity, so
+    # verification here is knowledge-based (PIN set in person, or DOB).
+    pin_hash = Column(String, nullable=True)
+    pin_salt = Column(String, nullable=True)
+    pin_set_at = Column(DateTime, nullable=True)
+
+    # Lockout state, counted PER PATIENT (not per call), so hanging up and
+    # redialling does not reset an attacker's attempt budget.
+    failed_attempts = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
+    last_verified_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, nullable=True)
+
     reports = relationship(
         "LabReport",
         back_populates="patient",
@@ -1087,7 +1126,52 @@ class ReportDelivery(Base):
 # APPOINTMENT
 # ============================================================================
 
+# Appointment.status values. Persisted, so they are a data format.
+APPT_BOOKED = "booked"
+APPT_RESCHEDULED = "rescheduled"   # still live; moved at least once
+APPT_CANCELLED = "cancelled"
+
+# Appointment.slot_lock -- see the Appointment docstring. A live row holds
+# this constant; a cancelled row holds its own confirmation_id instead.
+SLOT_LOCK_ACTIVE = "ACTIVE"
+
+
 class Appointment(Base):
+    """One appointment, plus the two columns cancellation forced us to add.
+
+    WHY slot_lock EXISTS
+    --------------------
+    The unique constraint on (doctor_id, date, time_slot) is what makes
+    double-booking impossible even when two callers race -- see
+    main.book_appointment()'s IntegrityError handler, which turns that race
+    into "that slot just went, here are three others".
+
+    Cancellation breaks that arrangement. A cancelled row has to be KEPT:
+    it is the audit trail, and every NotificationAttempt for the
+    cancellation message points at it. But a kept row goes on occupying its
+    slot under that constraint, so nobody could ever book a slot somebody
+    else had released -- the cancellation would free the patient and not
+    the appointment.
+
+    Deleting the row instead would solve the constraint and lose the
+    history, in the one domain where "we have no record of that
+    appointment" is the worst possible answer to give at a counter.
+
+    So the constraint gains a fourth column. A live row sets
+    slot_lock=SLOT_LOCK_ACTIVE, so at most one live row can hold a given
+    doctor/date/slot -- exactly the old guarantee. A cancelled row sets
+    slot_lock to its own confirmation_id, which is unique by its own
+    constraint, so any number of cancelled rows can pile up on the same
+    slot without ever colliding with each other or with the live one.
+
+    Every "is this slot taken" query must therefore filter on
+    slot_lock == SLOT_LOCK_ACTIVE. There are three in book_appointment()
+    and one in reschedule_appointment().
+
+    RESCHEDULING NEEDS NO TOMBSTONE: the row itself moves to the new
+    date/time_slot and stays ACTIVE, which frees the old slot as a
+    side effect of the UPDATE.
+    """
     __tablename__ = "appointments"
 
     id = Column(Integer, primary_key=True)
@@ -1140,6 +1224,19 @@ class Appointment(Base):
         nullable=False,
     )
 
+    # ADDED BY CHAKRAVARDHAN -- see this class's own docstring above for
+    # WHY these three exist (the slot_lock scheme that lets cancellation
+    # keep the audit row without permanently occupying the slot). Real,
+    # actively read/written columns: clinic-api/main.py's book_appointment/
+    # reschedule_appointment/cancel_appointment already reference
+    # appt.status, appt.slot_lock and the APPT_BOOKED/APPT_CANCELLED/
+    # APPT_RESCHEDULED/SLOT_LOCK_ACTIVE constants above this class
+    # unconditionally -- this branch's version of this class had simply
+    # never gained the columns its own docstring already described.
+    status = Column(String, nullable=False, default=APPT_BOOKED)
+    slot_lock = Column(String, nullable=False, default=SLOT_LOCK_ACTIVE)
+    updated_at = Column(DateTime, nullable=True)
+
     doctor = relationship(
         "Doctor",
     )
@@ -1154,6 +1251,12 @@ class Appointment(Base):
             "doctor_id",
             "date",
             "time_slot",
+            # ADDED BY CHAKRAVARDHAN -- slot_lock joins the uniqueness
+            # constraint (see the class docstring's "WHY slot_lock EXISTS"):
+            # without it, a cancelled row (which is kept, not deleted) would
+            # permanently occupy its doctor/date/time_slot forever, and
+            # nobody could ever book that slot again.
+            "slot_lock",
             name="uq_doctor_slot",
         ),
     )
@@ -1240,3 +1343,151 @@ class CallbackRequest(Base):
         DateTime,
         nullable=False,
     )
+
+
+class NotificationAttempt(Base):
+    """The delivery ledger: one row per message this service owes a patient.
+
+    THE ROW IS WRITTEN BEFORE ANYTHING IS SENT, in the same transaction as
+    the booking it belongs to. That ordering is the whole design. It means
+    there is no window in which we have taken a booking and have no record
+    that a message was due -- if the process dies before the background
+    task runs, the row is still there, still `queued`, and the staff queue
+    reports it as stale. "Silently dropped" is not a state this table can
+    represent.
+
+    The rendered `body` is stored rather than re-derived on demand. Two
+    reasons, both operational: reception needs to see the exact text the
+    patient was or was not sent when they turn up disputing it, and
+    templates change -- re-rendering a two-week-old failure through today's
+    template would show staff a message that was never composed.
+
+    THIS TABLE HOLDS PII (patient name and phone, in a column and again
+    inside `body`). So does `appointments`. Retention is not implemented
+    here and is flagged in the implementation notes as outstanding work,
+    rather than left to look like an oversight.
+    """
+    __tablename__ = "notification_attempts"
+    id = Column(Integer, primary_key=True)
+
+    # Not a ForeignKey on purpose. The ledger has to outlive the row it
+    # describes -- if an appointment is ever purged for retention, the
+    # evidence that we did or did not message that patient must not be
+    # cascaded away with it.
+    confirmation_id = Column(String, nullable=False, index=True)
+
+    event = Column(String, nullable=False)      # message_templates.EVENT_*
+    channel = Column(String, nullable=False, default="sms")
+    phone = Column(String, nullable=False)      # E.164 without '+', as sent
+    template_id = Column(String, nullable=False, default="")   # DLT content ID
+    body = Column(String, nullable=False)       # exactly what was submitted
+
+    status = Column(String, nullable=False, index=True)   # notifications.STATUS_*
+    provider_message_id = Column(String, nullable=True, index=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    error_code = Column(String, nullable=True)
+    error_detail = Column(String, nullable=True)
+
+    created_at = Column(DateTime, nullable=False)
+    # Moves on every state change. The staff queue's staleness rule is
+    # measured from here, not from created_at, so a row that was retried
+    # ten minutes ago is not immediately stale again.
+    updated_at = Column(DateTime, nullable=False)
+    delivered_at = Column(DateTime, nullable=True)
+
+    # Set when a member of staff has seen the failure and taken it on.
+    # An acknowledged row leaves the queue without its status being
+    # rewritten -- the failure stays a failure in the record.
+    acknowledged_by = Column(String, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+
+# ===========================================================================
+# PATIENT IDENTITY AND HISTORY
+# ---------------------------------------------------------------------------
+# Author: Chakravardhan
+#
+# Added for the story "History disclosed only after verification".
+#
+# THE THREAT THIS MODELS, stated plainly because every field below follows
+# from it: the handset is SHARED. A family phone, a shop phone, a neighbour's
+# phone. Somebody who is not the patient dials the clinic from it.
+#
+# Before this, the system had no notion of a patient at all -- only
+# Appointment rows carrying a phone number. Anything keyed on that phone
+# number would have read one person's medical history to whoever happened to
+# be holding their phone.
+# ===========================================================================
+
+# NOTE (merge dev_chakravardhan -> staging_merged): this story originally
+# defined its own `class Patient(Base): __tablename__ = "patients"` here,
+# duplicating the pre-existing Patient class above (which LabReport.patient
+# and Appointment.patient already depend on via back_populates). Two mapped
+# classes for the same table name would have broken SQLAlchemy's mapper
+# configuration at import time -- git's line-based diff never flagged it
+# because the two class bodies never touched the same lines. All of this
+# class's fields (full_name, date_of_birth, pin_hash, pin_salt, pin_set_at,
+# failed_attempts, locked_until, last_verified_at, created_at) have been
+# folded onto the original Patient class instead; nothing below was dropped.
+
+
+class TestRecord(Base):
+    """One test a patient actually had. THE THING THE STORY PROTECTS.
+
+    No such table existed -- `appointments` records doctor visits, not tests
+    taken -- so "what tests I have had" had no answer to disclose, safely or
+    otherwise. History has to be modelled before it can be withheld.
+
+    Kept deliberately thin. It holds enough to answer "which tests, when,
+    and is the report ready", and NOT the results themselves. A voice line
+    that reads clinical values aloud is a bigger disclosure surface than
+    this story is asking anyone to build, and the counter already exists as
+    the path for detail -- see the no-smartphone work.
+    """
+    __tablename__ = "test_records"
+    id = Column(Integer, primary_key=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    lab_test_id = Column(Integer, ForeignKey("lab_tests.id"), nullable=True)
+
+    # Denormalised on purpose: the catalogue can be reseeded (seed.py does a
+    # drop_all/create_all) and a patient's history must not turn into a list
+    # of dangling ids when it is.
+    test_name = Column(String, nullable=False)
+    test_name_bn = Column(String, nullable=True)
+
+    taken_on = Column(String, nullable=False)          # ISO yyyy-mm-dd
+    report_ready = Column(Boolean, nullable=False, default=False)
+    report_ready_on = Column(String, nullable=True)
+
+    created_at = Column(DateTime, nullable=False)
+
+    patient = relationship("Patient")
+
+
+class DisclosureAudit(Base):
+    """Every attempt to reach a patient's history, successful or not.
+
+    EXISTS BECAUSE THE FAILURES ARE THE INTERESTING PART. A row per success
+    tells you the feature works; a run of failures against one phone number
+    at 2am is somebody guessing, and without this table that is invisible.
+
+    NO SECRET IS EVER WRITTEN HERE. Not the PIN, not the date of birth, not
+    the answer that was offered. `factor` records WHICH kind of proof was
+    attempted and `outcome` records whether it worked -- an audit trail that
+    leaks the thing it audits would be worse than none.
+    """
+    __tablename__ = "disclosure_audit"
+    id = Column(Integer, primary_key=True)
+
+    # The number the call came from. Stored because it is the only handle on
+    # a repeated attacker; NOT stored as proof of anything.
+    phone = Column(String, nullable=False, index=True)
+    patient_id = Column(Integer, nullable=True)        # null when no match
+
+    factor = Column(String, nullable=False)            # "pin" | "dob" | "none"
+    outcome = Column(String, nullable=False, index=True)
+    # "verified" | "wrong_factor" | "no_patient" | "locked_out"
+    # | "no_factor_available" | "unsafe_audio_path" | "disclosed"
+
+    detail = Column(String, nullable=True)             # never a secret
+    call_id = Column(String, nullable=True)            # ties rows to one call
+    created_at = Column(DateTime, nullable=False, index=True)

@@ -32,6 +32,7 @@ import dataclasses
 import glob
 import logging
 import os
+import threading
 
 import torch
 import nemo.collections.asr as nemo_asr
@@ -122,6 +123,13 @@ class TurnASR:
     def __init__(self, nemo_file: str | None = None, language_id: str = "bn",
                  device: str | None = None):
         self.language_id = language_id
+
+        # Serializes _transcribe_clip. See its docstring -- this exists to
+        # stop concurrent callers corrupting each other's decoder selection,
+        # and it is created here (not lazily) so it is in place before the
+        # first call can ever reach the model.
+        self._infer_lock = threading.Lock()
+
         nemo_file = nemo_file or _resolve_nemo_file()
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = nemo_asr.models.ASRModel.restore_from(restore_path=nemo_file)
@@ -134,20 +142,60 @@ class TurnASR:
         self.model.change_decoding_strategy(rnnt_cfg, decoder_type="rnnt")
 
     def _transcribe_clip(self, clip_path: str) -> tuple[str, str]:
-        self.model.cur_decoder = "ctc"
-        ctc_texts = self.model.transcribe(
-            [clip_path], batch_size=1, logprobs=False, language_id=self.language_id,
-        )
-        ctc_text = _first_text(ctc_texts)
+        """Serialized across ALL callers -- see the lock below.
 
-        self.model.cur_decoder = "rnnt"
-        # Add a small retry for RNNT to handle transient failures
-        try:
-            rnnt_texts = self.model.transcribe([clip_path], batch_size=1, language_id=self.language_id)
-            rnnt_text = _first_text(rnnt_texts)
-        except Exception as e:
-            logger.warning("RNNT transcription failed, falling back to CTC: %s", e)
-            rnnt_text = ""
+        WHY THIS IS LOCKED
+        ------------------
+        `cur_decoder` is an attribute of the ONE shared model instance (see
+        the class docstring), and the two passes below select a decoder by
+        MUTATING it and then immediately reading it back inside
+        .transcribe(). That is a read-modify-write on process-wide state.
+
+        transcribe_utterance() dispatches this through asyncio.to_thread, so
+        with two callers mid-turn at the same time the interleaving is:
+
+            caller A: cur_decoder = "ctc"
+            caller B: cur_decoder = "rnnt"      <-- clobbers A
+            caller A: transcribe()              <-- runs RNNT, stored as ctc_text
+            caller B: transcribe()              <-- runs RNNT, correct by luck
+
+        Nothing raises. A gets an RNNT transcript filed as its CTC result,
+        so decoder_agreement below is computed between two RNNT outputs and
+        reports a confident ~1.0 for a comparison that never happened. The
+        failure needs two overlapping calls to appear at all, which is why
+        it is invisible in single-caller testing and shows up only at the
+        busiest hour -- exactly when it is hardest to diagnose.
+
+        The lock spans the WHOLE method rather than each pass separately.
+        Two narrower critical sections would also close the race, but on a
+        single GPU concurrent .transcribe() calls do not run in parallel
+        anyway -- they time-slice the same device while each holding its own
+        set of activations resident. Serializing turns that into a fair,
+        predictable queue and keeps peak VRAM at one inference's worth,
+        which matters here because ASR shares a 24GB card with Qwen (~6.6GB
+        resident) and TTS. Bounded waiting beats unbounded thrash.
+
+        The cleaner long-term fix is to stop selecting the decoder by
+        mutation at all -- either two model handles, or passing the decoder
+        per call -- which would let this run concurrently. That is a larger
+        change against the AI4Bharat fork's API and is deliberately not
+        attempted here.
+        """
+        with self._infer_lock:
+            self.model.cur_decoder = "ctc"
+            ctc_texts = self.model.transcribe(
+                [clip_path], batch_size=1, logprobs=False, language_id=self.language_id,
+            )
+            ctc_text = _first_text(ctc_texts)
+
+            self.model.cur_decoder = "rnnt"
+            # Add a small retry for RNNT to handle transient failures
+            try:
+                rnnt_texts = self.model.transcribe([clip_path], batch_size=1, language_id=self.language_id)
+                rnnt_text = _first_text(rnnt_texts)
+            except Exception as e:
+                logger.warning("RNNT transcription failed, falling back to CTC: %s", e)
+                rnnt_text = ""
 
         return ctc_text, rnnt_text
 
@@ -175,3 +223,78 @@ class TurnASR:
 
     async def transcribe_utterance(self, wav_path: str) -> ASRResult:
         return await asyncio.to_thread(self.transcribe_utterance_sync, wav_path)
+
+
+# ===========================================================================
+# Multilingual ASR
+# ===========================================================================
+# The checkpoint this module has always loaded is BENGALI-ONLY
+# (indicconformer_stt_bn_*). It cannot transcribe Hindi or English, and
+# language.py's enabled() refuses to advertise a language whose checkpoint
+# is not configured for exactly that reason.
+#
+# What follows is the registry that makes a second or third checkpoint
+# usable once it is on the pod. It changes nothing about the Bengali path:
+# for(default_lang) returns the same singleton main.py already builds.
+_LANG_NODES: dict[str, "TurnASR"] = {}
+_LANG_LOCK = threading.Lock()
+
+
+def register(lang: str, node: "TurnASR") -> None:
+    """Put an already-built node in the registry.
+
+    main.py registers the singleton it builds at startup under the default
+    language, so the registry never loads a second copy of the checkpoint
+    that is already resident -- which on a 24GB card shared with Ollama and
+    TTS is not a small detail.
+    """
+    with _LANG_LOCK:
+        _LANG_NODES[lang] = node
+
+
+def available(lang: str) -> bool:
+    """-> whether a checkpoint for `lang` is loaded or configured.
+
+    Checked BEFORE a caller is offered the language, never after they have
+    already spoken it. See language.enabled(), which uses the same
+    environment variables.
+    """
+    from agent import language as _lang_mod
+    if lang in _LANG_NODES:
+        return True
+    spec = _lang_mod.SPECS.get(lang)
+    return bool(spec and os.environ.get(spec.asr_checkpoint_env, "").strip())
+
+
+def for_language(lang: str) -> "TurnASR | None":
+    """-> the ASR node for `lang`, loading it on first use, or None.
+
+    None means "this pod cannot hear that language" and callers must fall
+    back to the default node rather than failing the turn: a caller whose
+    language we cannot serve is still a caller, and answering them in
+    Bengali beats answering them with silence.
+
+    Loading is lazy and locked. Eagerly loading three IndicConformer
+    checkpoints at boot would cost VRAM on a card that also holds Qwen2.5
+    and two TTS voices, to serve languages a given line may never hear.
+    """
+    from agent import language as _lang_mod
+
+    lang = _lang_mod.resolve(lang)
+    node = _LANG_NODES.get(lang)
+    if node is not None:
+        return node
+
+    spec = _lang_mod.SPECS.get(lang)
+    if spec is None:
+        return None
+    checkpoint = os.environ.get(spec.asr_checkpoint_env, "").strip()
+    if not checkpoint:
+        return None
+
+    with _LANG_LOCK:
+        if lang not in _LANG_NODES:      # re-checked under the lock
+            logger.info("loading %s ASR checkpoint from %s", lang, checkpoint)
+            _LANG_NODES[lang] = TurnASR(nemo_file=checkpoint,
+                                        language_id=spec.asr_language_id)
+        return _LANG_NODES[lang]

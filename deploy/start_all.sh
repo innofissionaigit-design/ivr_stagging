@@ -17,7 +17,7 @@
 set -u
 
 REPO=/workspace/kolkata-care-voice-agent
-source "$REPO/deploy/env.sh"
+source "$REPO/deploy/${VOICE_AGENT_ENV_FILE:-env.sh}"
 mkdir -p /workspace/logs /workspace/bin
 
 start() {  # start <name> <port> <logfile> <command...>
@@ -51,34 +51,34 @@ fi
 echo "== services =="
 cat > /workspace/bin/_run_tts.sh <<'EOF'
 #!/bin/bash
-source /workspace/kolkata-care-voice-agent/deploy/env.sh
+source /workspace/kolkata-care-voice-agent/deploy/${VOICE_AGENT_ENV_FILE:-env.sh}
 cd /workspace/tts_venv
-exec ./bin/python3 -m uvicorn tts_server:app --host 0.0.0.0 --port 8002 --app-dir /workspace/tts_venv
+exec ./bin/python3 -m uvicorn tts_server:app --host 0.0.0.0 --port ${TTS_PORT:-8002} --app-dir /workspace/tts_venv
 EOF
 cat > /workspace/bin/_run_clinic.sh <<'EOF'
 #!/bin/bash
-source /workspace/kolkata-care-voice-agent/deploy/env.sh
+source /workspace/kolkata-care-voice-agent/deploy/${VOICE_AGENT_ENV_FILE:-env.sh}
 cd /workspace/kolkata-care-voice-agent/clinic-api
-exec /workspace/venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8080
+exec /workspace/venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port ${CLINIC_API_PORT:-8080}
 EOF
 cat > /workspace/bin/_run_main.sh <<'EOF'
 #!/bin/bash
-source /workspace/kolkata-care-voice-agent/deploy/env.sh
+source /workspace/kolkata-care-voice-agent/deploy/${VOICE_AGENT_ENV_FILE:-env.sh}
 cd /workspace/kolkata-care-voice-agent
-exec /workspace/venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8100
+exec /workspace/venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port ${VOICE_AGENT_PORT:-8100}
 EOF
 cat > /workspace/bin/_run_pcm.sh <<'EOF'
 #!/bin/bash
-source /workspace/kolkata-care-voice-agent/deploy/env.sh
+source /workspace/kolkata-care-voice-agent/deploy/${VOICE_AGENT_ENV_FILE:-env.sh}
 cd /workspace/kolkata-care-voice-agent
-exec /workspace/venv/bin/python3 -m uvicorn main_pcm:app --host 0.0.0.0 --port 8101
+exec /workspace/venv/bin/python3 -m uvicorn main_pcm:app --host 0.0.0.0 --port ${VOICE_AGENT_PCM_PORT:-8101}
 EOF
 chmod +x /workspace/bin/_run_*.sh
 
-start tts        8002 /workspace/logs/tts_server.log /workspace/bin/_run_tts.sh
-start clinic-api 8080 /workspace/logs/clinic_api.log /workspace/bin/_run_clinic.sh
-start voice-agent 8100 /workspace/logs/main_app.log  /workspace/bin/_run_main.sh
-start voice-pcm  8101 /workspace/logs/pcm_app.log    /workspace/bin/_run_pcm.sh
+start tts        "${TTS_PORT:-8002}" /workspace/logs/tts_server.log /workspace/bin/_run_tts.sh
+start clinic-api "${CLINIC_API_PORT:-8080}" /workspace/logs/clinic_api.log /workspace/bin/_run_clinic.sh
+start voice-agent "${VOICE_AGENT_PORT:-8100}" /workspace/logs/main_app.log  /workspace/bin/_run_main.sh
+start voice-pcm  "${VOICE_AGENT_PCM_PORT:-8101}" /workspace/logs/pcm_app.log    /workspace/bin/_run_pcm.sh
 
 echo
 echo "Models load for 1-3 minutes. Watch readiness with:"

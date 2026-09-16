@@ -1,0 +1,29 @@
+{
+  "GET /api/audit/calls": {
+    "body": null,
+    "params": [
+      "header:x-audit-token:optional",
+      "query:limit:optional",
+      "query:status:optional"
+    ]
+  },
+  "GET /api/audit/calls/{call_id}": {
+    "body": null,
+    "params": [
+      "header:x-audit-token:optional",
+      "path:call_id:required"
+    ]
+  },
+  "GET /api/health": {
+    "body": null,
+    "params": []
+  },
+  "GET /api/quality": {
+    "body": null,
+    "params": []
+  },
+  "GET /api/stats": {
+    "body": null,
+    "params": []
+  }
+}

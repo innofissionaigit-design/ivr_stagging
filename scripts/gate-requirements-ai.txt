@@ -1,0 +1,3 @@
+# G2 fresh-context AI review (scripts/gate-ai-review.py). Author: Chakravardhan
+# Installed only inside the G2 workflow; the application does not depend on it.
+anthropic==1.5.0

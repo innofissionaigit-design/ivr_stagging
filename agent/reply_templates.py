@@ -5,7 +5,7 @@ ID) is at stake.
 This is the same discipline voicerx/gate.py already applies to drug names
 ("the SLM proposes, the gazetteer decides") ported to this domain: the LLM
 may decide WHAT the caller wants and WHICH slots it heard, but the actual
-number in the caller's ear always comes from the Spring Boot response,
+number in the caller's ear always comes from the clinic-api response,
 substituted into a fixed template. The model never gets a chance to
 misremember or round a price it was merely shown a moment ago.
 
@@ -41,6 +41,24 @@ survives.
 from __future__ import annotations
 
 import re
+
+# ADDED BY CHAKRAVARDHAN -- used only by the block of new functions near the
+# end of this file (payment_reply onward: patient verification, history/
+# bookings disclosure, language-switch and counter-fallback replies). Those
+# functions are genuinely new, not a rewrite of anything above, and their
+# only call sites (main.py/main_pcm.py) always pass the language positionally
+# (`session.lang`), never as the keyword `lang=`, so keeping their original
+# agent.i18n.t()-based implementation here does not conflict with the rest
+# of this file's inline per-language template convention.
+from agent import language as lang_mod
+from agent.i18n import t, available_languages_phrase
+
+
+def _lang(lang: str | None) -> str:
+    """One place that turns "whatever the caller passed" into a language
+    this pod can actually serve. None -> the pod default (Bengali)."""
+    return lang_mod.resolve(lang)
+
 
 # STORY [Answer Quality and Grounding]
 # As a patient, I want to hear the whole sentence, so that I am
@@ -949,7 +967,25 @@ def doctor_availability_reply(slots: dict, result: dict, language: str = "bengal
     name = _spoken_doctor_name(slots, result, language=language)
     if result.get("available"):
         hours = result.get("chamber_hours", "")
-        # Confirms the doctor is in, then keeps the caller moving straight
+        # NOTE (merge dev_chakravardhan -> staging_merged): dev_chakravardhan's
+        # side of this conflict replaced every function above (missing_slot_
+        # prompt, test_rate_reply, doctor_availability_reply, and the two
+        # _spoken_*_name helpers) with a rewrite onto agent/i18n.t() and an
+        # `agent/language`-resolved `lang` parameter, intended to make every
+        # public function here callable with `lang=None` defaulting to
+        # Bengali. That rewrite is NOT taken: main.py and main_pcm.py call
+        # these exact functions with the keyword argument `language=`
+        # (dozens of call sites -- test_rate_reply, missing_slot_prompt,
+        # doctor_availability_reply, booking_reply), which only works
+        # against this file's actual, already-integrated parameter name.
+        # HEAD's fuller implementation (near-match handling, spoken lists,
+        # per-language sample/duration/preparation replies, etc., none of
+        # which the i18n rewrite carried over) is kept in full instead.
+        # The one genuinely new idea in that rewrite with no HEAD
+        # equivalent -- telling the caller whether a written SMS
+        # confirmation is actually on its way -- has been ported onto
+        # booking_reply() below as _written_confirmation_clause(), using
+        # this file's own per-language template style rather than t().
         # into booking instead of stopping here -- main.py stays listening
         # for the answer to this exact question (see its "date" pending
         # state), so "আজকেই" / "অন্য দিন" both continue the flow.
@@ -1201,6 +1237,42 @@ def doctor_schedule_reply(slots: dict, result: dict, language: str = "bengali") 
         return f"{name} {', আর '.join(clauses)}।"
 
 
+# ADDED BY CHAKRAVARDHAN -- "no flow may dead-end on a smartphone".
+def _written_confirmation_clause(result: dict, language: str = "bengali") -> str:
+    """The one clause that tells a caller whether a written copy is coming.
+
+    ONLY PROMISES A MESSAGE WHEN ONE IS ACTUALLY ON ITS WAY. clinic-api
+    reports the notification ledger row's status on every appointment
+    response (see clinic-api/main.py's _schedule_delivery()); "queued"
+    means the row is committed and a send has been scheduled, and that is
+    the only value that earns this promise.
+
+    "skipped" and "failed" mean nothing will arrive. Promising an SMS then
+    is worse than saying nothing: the caller stops noting the number down,
+    hangs up satisfied, and finds out at the reception desk.
+
+    THE STORY'S RULE APPLIES HERE TOO. When no message is coming, the
+    caller is NOT simply left with a number to memorise -- they are told
+    they can be found at reception by name and phone number. That is what
+    makes this flow complete without a smartphone AND without a good
+    memory, which is the same requirement wearing a different hat.
+    """
+    status = (result.get("notification") or {}).get("status")
+    if status == "queued":
+        if language == "english":
+            return " A confirmation message is also on its way to your phone."
+        elif language == "hinglish":
+            return " Aapke phone par confirmation message bhi aa raha hai."
+        else:  # bengali
+            return " আপনার ফোনে একটা কনফার্মেশন মেসেজও যাচ্ছে।"
+    if language == "english":
+        return " If no message arrives, our reception can confirm your booking by your name and phone number."
+    elif language == "hinglish":
+        return " Agar message na aaye, hamara reception aapka naam aur phone number se booking confirm kar sakta hai."
+    else:  # bengali
+        return " মেসেজ না পেলে, আমাদের কাউন্টারে নাম ও ফোন নম্বর দিয়ে আপনার বুকিং কনফার্ম করে নিতে পারবেন।"
+
+
 def booking_reply(slots: dict, result: dict, language: str = "bengali") -> str:
     if result.get("success"):
         # Preserve exact values in all languages
@@ -1210,17 +1282,29 @@ def booking_reply(slots: dict, result: dict, language: str = "bengali") -> str:
         confirmation_id = result['confirmation_id']
         
         if language == "english":
-            return (f"Your appointment is confirmed. "
+            reply = (f"Your appointment is confirmed. "
                     f"{doctor}, {date}, time {time_slot}. "
                     f"Your confirmation number is {confirmation_id}.")
         elif language == "hinglish":
-            return (f"Aapka appointment confirm ho gaya. "
+            reply = (f"Aapka appointment confirm ho gaya. "
                     f"{doctor}, {date}, time {time_slot}. "
                     f"Aapka confirmation number hai {confirmation_id}.")
         else:  # bengali
-            return (f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
+            reply = (f"আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। "
                     f"{doctor}, {date}, সময় {time_slot}। "
                     f"আপনার কনফার্মেশন নম্বর হলো {confirmation_id}।")
+        # ADDED BY CHAKRAVARDHAN -- "no flow may dead-end on a smartphone":
+        # tell the caller plainly whether a written copy is actually on its
+        # way, using the notification ledger status clinic-api's
+        # book_appointment() now returns (see _schedule_delivery() there).
+        # Rewritten onto this file's inline per-language template style
+        # (rather than dev_chakravardhan's agent/i18n.t()-based version of
+        # this function) because main.py/main_pcm.py call every function in
+        # this module -- including this one -- with the keyword argument
+        # `language=`, dozens of times; the i18n version renamed that
+        # parameter to `lang`, which would break every one of those call
+        # sites.
+        return reply + _written_confirmation_clause(result, language)
 
     reason = result.get("reason")
     if reason == "slot_taken":
@@ -1341,6 +1425,131 @@ def booking_correction_prompt(language: str = "bengali") -> str:
         return "Kono problem nei -- ki thik korte hobe, doctor, date, time, naam, na ki phone number?"
     else:  # bengali
         return "ঠিক আছে, কোনটা ঠিক করে দেব - ডাক্তার, তারিখ, সময়, নাম, নাকি ফোন নম্বর?"
+
+
+# ADDED BY CHAKRAVARDHAN -- "Booking, reschedule and cancellation" story.
+# No caller flow in main.py/main_pcm.py invokes these two functions yet
+# within this merge's scope (only clinic-api/main.py's reschedule_appointment/
+# cancel_appointment endpoints are wired up so far), but they are kept as
+# genuinely new, non-duplicated functionality rather than dropped. Rewritten
+# onto this file's own inline per-language template style, matching
+# booking_reply() immediately above, instead of dev_chakravardhan's original
+# agent/i18n.t()-based version -- consistent with every other function in
+# this file and with how _written_confirmation_clause() was already adapted.
+def reschedule_reply(slots: dict, result: dict, language: str = "bengali") -> str:
+    """Spoken confirmation for a moved appointment.
+
+    States explicitly that the reference number has NOT changed. A caller
+    who is still holding the first message needs to hear that the paper in
+    their hand is still valid, otherwise the natural assumption is that it
+    is not.
+    """
+    if result.get("success"):
+        doctor = _spoken_doctor_name(slots, result, language=language)
+        date = result["date"]
+        time_slot = result["time_slot"]
+        confirmation_id = result["confirmation_id"]
+        if language == "english":
+            reply = (f"Your appointment has been moved. "
+                     f"{doctor}, {date}, time {time_slot}. "
+                     f"Your reference number stays the same: {confirmation_id}.")
+        elif language == "hinglish":
+            reply = (f"Aapka appointment reschedule ho gaya. "
+                     f"{doctor}, {date}, time {time_slot}. "
+                     f"Aapka reference number same hai: {confirmation_id}.")
+        else:  # bengali
+            reply = (f"আপনার অ্যাপয়েন্টমেন্ট পরিবর্তন করা হয়েছে। "
+                     f"{doctor}, {date}, সময় {time_slot}। "
+                     f"রেফারেন্স নম্বর একই থাকছে: {confirmation_id}।")
+        return reply + _written_confirmation_clause(result, language)
+
+    reason = result.get("reason")
+    if reason == "slot_taken":
+        alts = result.get("alternative_slots") or []
+        if alts:
+            if language == "english":
+                return f"That time is already booked, but {', '.join(alts)} are available. Which would you prefer?"
+            elif language == "hinglish":
+                return f"Wo time already book ho gaya, lekin {', '.join(alts)} available hain. Kaunsa prefer karte ho?"
+            else:  # bengali
+                return (f"ওই সময়টা বুক হয়ে গেছে, তবে {_spoken_list(alts)} "
+                        f"সময়গুলো ফাঁকা আছে। কোনটা চান?")
+        if language == "english":
+            return "That time is already booked, and there are no nearby available times."
+        elif language == "hinglish":
+            return "Wo time already book ho gaya, aur paas mein koi available time nahi hai."
+        else:  # bengali
+            return "ওই সময়টা বুক হয়ে গেছে, এবং কাছাকাছি কোনো সময় ফাঁকা নেই।"
+    if reason == "appointment_not_found":
+        if language == "english":
+            return "Sorry, I couldn't find an appointment with that reference number."
+        elif language == "hinglish":
+            return "Sorry, is reference number se koi appointment nahi mila."
+        else:  # bengali
+            return "দুঃখিত, এই রেফারেন্স নম্বরে কোনো অ্যাপয়েন্টমেন্ট পাওয়া যায়নি।"
+    if reason == "appointment_cancelled":
+        if language == "english":
+            return "That appointment has already been cancelled, so there's nothing to reschedule."
+        elif language == "hinglish":
+            return "Wo appointment pehle hi cancel ho chuka hai, isliye reschedule karne ke liye kuch nahi hai."
+        else:  # bengali
+            return "এই অ্যাপয়েন্টমেন্টটা আগেই বাতিল হয়ে গেছে, তাই নতুন করে সময় দেওয়ার কিছু নেই।"
+    if reason == "doctor_not_available_that_day":
+        if language == "english":
+            return "The doctor isn't available that day. Please choose another day."
+        elif language == "hinglish":
+            return "Doctor us din available nahi hain. Kripya koi aur din choose karein."
+        else:  # bengali
+            return "ডাক্তার ওই দিন বসেন না। অন্য কোনো দিন বেছে নিন।"
+    if language == "english":
+        return "Sorry, couldn't reschedule the appointment. Please try again later, or contact our counter."
+    elif language == "hinglish":
+        return "Sorry, appointment reschedule nahi ho paya. Thodi der baad phir try karein, ya hamare counter se contact karein."
+    else:  # bengali
+        return "দুঃখিত, অ্যাপয়েন্টমেন্টের সময় পরিবর্তন করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
+
+
+def cancel_reply(slots: dict, result: dict, language: str = "bengali") -> str:
+    """Spoken confirmation for a cancellation.
+
+    `already_cancelled` is reported as the plain fact rather than as an
+    error, because from the caller's side it is the outcome they asked for
+    -- the appointment is not going to happen. clinic-api sends no second
+    message in that case, so no message is promised here either.
+    """
+    if result.get("success"):
+        date = result["date"]
+        time_slot = result["time_slot"]
+        confirmation_id = result["confirmation_id"]
+        if result.get("already_cancelled"):
+            if language == "english":
+                return "That appointment was already cancelled."
+            elif language == "hinglish":
+                return "Wo appointment pehle hi cancel ho chuka tha."
+            else:  # bengali
+                return "এই অ্যাপয়েন্টমেন্টটা আগেই বাতিল করা হয়েছিল।"
+        if language == "english":
+            reply = f"Your appointment on {date} at {time_slot} has been cancelled. Reference number {confirmation_id}."
+        elif language == "hinglish":
+            reply = f"Aapka {date} ka {time_slot} appointment cancel kar diya gaya hai. Reference number {confirmation_id}."
+        else:  # bengali
+            reply = (f"আপনার {date} তারিখের {time_slot} সময়ের অ্যাপয়েন্টমেন্টটা বাতিল করা হয়েছে। "
+                     f"রেফারেন্স নম্বর {confirmation_id}।")
+        return reply + _written_confirmation_clause(result, language)
+
+    if result.get("reason") == "appointment_not_found":
+        if language == "english":
+            return "Sorry, I couldn't find an appointment with that reference number."
+        elif language == "hinglish":
+            return "Sorry, is reference number se koi appointment nahi mila."
+        else:  # bengali
+            return "দুঃখিত, এই রেফারেন্স নম্বরে কোনো অ্যাপয়েন্টমেন্ট পাওয়া যায়নি।"
+    if language == "english":
+        return "Sorry, couldn't cancel the appointment. Please try again later, or contact our counter."
+    elif language == "hinglish":
+        return "Sorry, appointment cancel nahi ho paya. Thodi der baad phir try karein, ya hamare counter se contact karein."
+    else:  # bengali
+        return "দুঃখিত, অ্যাপয়েন্টমেন্ট বাতিল করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
 
 
 def doctors_by_department_reply(slots: dict, result: dict, language: str = "bengali") -> str:
@@ -2946,3 +3155,263 @@ def callback_scheduled_reply(slots: dict, result: dict, language: str = "bengali
         return "Dukkhito, apnar callback request note korte parlam na. Ektu pore abar try korun, ba counter-e jogajog korun."
     else:  # bengali
         return "দুঃখিত, আপনার কল ব্যাকের অনুরোধ নথিভুক্ত করা গেল না। একটু পরে আবার চেষ্টা করুন, অথবা কাউন্টারে যোগাযোগ করুন।"
+
+
+# NOTE (merge dev_chakravardhan -> staging_merged): dev_chakravardhan's side
+# of this conflict opened with its own i18n-based tail of
+# doctors_by_department_reply(), duplicating the function already resolved
+# above (see its HEAD-based ending just before the "ADDED BY SOURAV" report-
+# status block) -- discarded here for the same reason as the earlier
+# doctors_by_department_reply conflict. Everything from payment_reply()
+# onward below is genuinely new, additive functionality with no HEAD
+# equivalent (confirmed by diffing every `def`/constant name on each side of
+# this conflict) and is kept in full, using its original
+# agent.i18n.t()-based implementation -- see the _lang()/imports note near
+# the top of this file for why that is safe here specifically.
+# ===========================================================================
+# The two flows that exist because of "every flow completes without a
+# smartphone".
+# ===========================================================================
+def payment_reply(slots: dict, result: dict, lang: str | None = None) -> str:
+    """How the caller pays -- and it is never through a link.
+
+    Before this existed, a caller who asked "কত টাকা লাগবে, কীভাবে দেব?"
+    got a price and nothing about HOW. That is a flow with no completion
+    path: the caller knows the number and still does not know what to do
+    next. The obvious modern answer -- text them a payment link -- is
+    precisely what this story forbids, and it would exclude every caller on
+    a feature phone, which on this line is a large share of them.
+
+    So the answer is the counter, stated first and stated as normal.
+    `result` is optional context from a test-rate lookup; the answer is
+    complete without it, because a caller who has not named a test still
+    deserves to know how payment works.
+    """
+    code = _lang(lang)
+    reply = t(code, "payment.how")
+
+    result = result or {}
+    if result.get("found") and result.get("rate_inr"):
+        reply += t(code, "payment.amount",
+                   name=_spoken_test_name(slots, result, code), rate=result["rate_inr"])
+
+    reply += t(code, "payment.no_advance")
+    reply += t(code, "payment.counter_only")
+    return reply
+
+
+def report_collection_reply(slots: dict, result: dict, lang: str | None = None) -> str:
+    """When the report is ready and how to get it, with no portal involved.
+
+    Three completion paths, in the order a caller can actually use them:
+
+      1. collect a printed copy at the counter, identified by name and
+         phone -- deliberately NOT by the reference number, so a caller who
+         lost it is not turned away;
+      2. ring in and have it read out, for someone who cannot travel;
+      3. send somebody else, who needs only the patient's name and number.
+
+    None of the three needs a smartphone, an app, or a link. The report
+    hours come from the catalogue when the caller named a test, and the
+    answer stays useful when they did not.
+    """
+    code = _lang(lang)
+    result = result or {}
+
+    hours = result.get("report_time_hours")
+    reply = (t(code, "report.when", hours=hours) if hours
+             else t(code, "report.when_unknown"))
+
+    reply += t(code, "report.collect")
+    reply += t(code, "report.phone_readout")
+    reply += t(code, "report.someone_else")
+    return reply
+
+
+def counter_fallback(lang: str | None = None, hours: str | None = None) -> str:
+    """The universal completion path, for any turn that cannot finish on
+    the phone.
+
+    Exists so no branch anywhere ends with the caller holding nothing. A
+    "sorry, I can't do that" with no next step is exactly the dead end the
+    story names, even when no smartphone was ever mentioned.
+    """
+    code = _lang(lang)
+    reply = t(code, "counter.walk_in")
+    if hours:
+        reply = t(code, "counter.hours", hours=hours) + " " + reply
+    return reply
+
+
+# ===========================================================================
+# Language handling
+# ===========================================================================
+def language_switch_reply(lang: str | None = None) -> str:
+    """Spoken IN THE NEW LANGUAGE, which is the point -- it is the caller's
+    proof that the switch actually took."""
+    return t(_lang(lang), "language.switched")
+
+
+def language_unavailable_reply(current_lang: str | None = None) -> str:
+    """The caller asked for a language this pod cannot serve.
+
+    Answered in the language they are currently being understood in, and it
+    names what IS available. Silently ignoring the request reads as the
+    system not having heard them, and they ask again -- burning a turn and
+    their patience on a line that will never say yes.
+    """
+    code = _lang(current_lang)
+    return t(code, "language.unavailable", available=available_languages_phrase(code))
+
+
+# ===========================================================================
+# PATIENT HISTORY -- disclosed only after verification
+# Author: Chakravardhan
+# ===========================================================================
+# THE WORDING IS PART OF THE SECURITY HERE, more than anywhere else in this
+# file. Everything below is built so that a caller cannot learn anything from
+# the SHAPE of a refusal: the sentence for a wrong PIN, an unknown number and
+# a patient with no factor on file is one and the same sentence.
+# What a verification was started FOR. Carried in session.pending so the
+# right thing is read out once the caller is verified, and so the challenge
+# names what it is about to unlock.
+PURPOSE_HISTORY = "history"
+PURPOSE_BOOKINGS = "bookings"
+
+
+def verification_prompt(factor: str, lang: str | None = None,
+                        purpose: str = PURPOSE_HISTORY) -> str:
+    """Ask for the proof. Names WHICH kind, never anything about the answer.
+
+    A caller who genuinely set a PIN at the counter needs to be told it is
+    the PIN we want; that is not a hint, it is the question. What must never
+    appear is how many digits matched, how many attempts remain, or whether
+    this number is known to the clinic at all.
+
+    `purpose` only changes what the sentence says it is FOR ("your history"
+    or "your bookings"). The default keeps the original sentence exactly.
+    """
+    code = _lang(lang)
+    prefix = "timeline" if purpose == PURPOSE_BOOKINGS else "history"
+    return t(code, f"{prefix}.ask_pin" if factor == "pin" else f"{prefix}.ask_dob")
+
+
+def verification_failed_reply(exhausted: bool, lang: str | None = None) -> str:
+    """One sentence for every kind of failure.
+
+    `exhausted` switches between "try again" and "go to the counter" -- it
+    is about whether another attempt is POSSIBLE, not about why this one
+    failed. The caller learns nothing from it that helps them guess.
+
+    The counter sentence deliberately says nothing needs bringing and a name
+    is enough: a patient who cannot get past verification is exactly the
+    patient least likely to be holding a reference number, and sending them
+    away with a requirement they cannot meet is the dead end the
+    no-smartphone story already ruled out.
+    """
+    code = _lang(lang)
+    return t(code, "history.failed" if exhausted else "history.retry")
+
+
+def verification_locked_reply(lang: str | None = None) -> str:
+    """Says the number is paused. Does NOT say for how long, or how many
+    attempts caused it -- both are useful only to somebody guessing."""
+    return t(_lang(lang), "history.locked")
+
+
+def disclosure_blocked_reply(reason: str, lang: str | None = None) -> str:
+    """Refused because of the ROOM, not the caller.
+
+    Distinguishing this from a verification failure is the one place extra
+    detail is SAFE and necessary: a verified patient standing next to their
+    family needs to know the fix is to pick the phone up, not that they
+    failed to prove who they are. Saying "that did not match" here would
+    send an honest caller round a loop they cannot get out of.
+    """
+    code = _lang(lang)
+    if reason == "disclosure_disabled":
+        return t(code, "history.disclosure_off")
+    if reason == "text_channel":
+        # Refused because it is a MESSAGE -- see privacy.channel_is_private().
+        # "Pick the phone up" would be the wrong fix; calling is the right one.
+        return t(code, "channel.private_by_message")
+    return t(code, "history.speakerphone")
+
+
+# How many tests are read aloud before the rest are deferred to the counter.
+# Three, not all of them: a spoken list stops being usable past about three
+# items, and every additional sentence is more time during which somebody can
+# walk into the room. Minimum disclosure is a privacy property, not just a UX
+# one.
+HISTORY_SPOKEN_LIMIT = 3
+
+
+def history_reply(result: dict, lang: str | None = None) -> str:
+    """The history itself, kept as short as it can usefully be.
+
+    NAMES, DATES AND WHETHER A REPORT IS READY. Never results, never values,
+    never a diagnosis -- clinic-api does not return them (see
+    history_service.history()) and this function could not speak them if it
+    tried. The counter is named for detail, which is also the path that needs
+    no smartphone.
+    """
+    code = _lang(lang)
+    tests = (result or {}).get("tests") or []
+    if not tests:
+        return t(code, "history.none")
+
+    reply = t(code, "history.intro", count=len(tests))
+    for item in tests[:HISTORY_SPOKEN_LIMIT]:
+        name = (item.get("test_name_bn") if code != lang_mod.EN else None) \
+               or item.get("test_name") or t(code, "word.test")
+        key = "history.item_ready" if item.get("report_ready") else "history.item_pending"
+        reply += t(code, key, name=name, date=item.get("taken_on", ""))
+
+    remaining = len(tests) - HISTORY_SPOKEN_LIMIT
+    if remaining > 0:
+        reply += t(code, "history.more", count=remaining)
+
+    reply += t(code, "history.detail_at_counter")
+    return reply
+
+
+# ===========================================================================
+# A SINGLE PATIENT TIMELINE -- Author: Chakravardhan
+# ===========================================================================
+# Story: "As a patient, I want the agent to already know what I have booked
+# here, so that I am not made to recite my own history to the hospital that
+# holds it."
+
+# How many upcoming bookings are read aloud before the rest go to the
+# counter. Three, for the same two reasons as HISTORY_SPOKEN_LIMIT: a spoken
+# list stops being usable past about three, and every extra sentence is more
+# time for somebody to walk into the room.
+BOOKINGS_SPOKEN_LIMIT = 3
+
+
+def bookings_reply(result: dict, lang: str | None = None) -> str:
+    """What the patient has booked, from the timeline clinic-api returned.
+
+    EVERY FACT COMES FROM `upcoming_appointments` -- doctor, date and time as
+    clinic-api holds them, soonest first. Cancelled and past bookings are not
+    in that list, so they cannot be read out as if they were still on.
+
+    NO CONFIRMATION NUMBER IS SPOKEN. The story is that the patient should
+    not need one to be answered; reading it out would hand the next person
+    to hold this phone the one thing that identifies the booking.
+    """
+    code = _lang(lang)
+    upcoming = (result or {}).get("upcoming_appointments") or []
+    if not upcoming:
+        return t(code, "timeline.no_bookings")
+
+    reply = t(code, "timeline.intro", count=len(upcoming))
+    for item in upcoming[:BOOKINGS_SPOKEN_LIMIT]:
+        reply += t(code, "timeline.item",
+                   doctor=_spoken_doctor_name({}, item, code),
+                   date=item.get("date") or "", time=item.get("time_slot") or "")
+
+    remaining = len(upcoming) - BOOKINGS_SPOKEN_LIMIT
+    if remaining > 0:
+        reply += t(code, "timeline.more", count=remaining)
+    return reply

@@ -1,0 +1,1260 @@
+diff --git a/agent/asr.py b/agent/asr.py
+index dc36808..152c09b 100644
+--- a/agent/asr.py
++++ b/agent/asr.py
+@@ -32,6 +32,7 @@ import dataclasses
+ import glob
+ import logging
+ import os
++import threading
+ 
+ import torch
+ import nemo.collections.asr as nemo_asr
+@@ -99,6 +100,13 @@ class TurnASR:
+     def __init__(self, nemo_file: str | None = None, language_id: str = "bn",
+                  device: str | None = None):
+         self.language_id = language_id
++
++        # Serializes _transcribe_clip. See its docstring -- this exists to
++        # stop concurrent callers corrupting each other's decoder selection,
++        # and it is created here (not lazily) so it is in place before the
++        # first call can ever reach the model.
++        self._infer_lock = threading.Lock()
++
+         nemo_file = nemo_file or _resolve_nemo_file()
+         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+         self.model = nemo_asr.models.ASRModel.restore_from(restore_path=nemo_file)
+@@ -111,20 +119,60 @@ class TurnASR:
+         self.model.change_decoding_strategy(rnnt_cfg, decoder_type="rnnt")
+ 
+     def _transcribe_clip(self, clip_path: str) -> tuple[str, str]:
+-        self.model.cur_decoder = "ctc"
+-        ctc_texts = self.model.transcribe(
+-            [clip_path], batch_size=1, logprobs=False, language_id=self.language_id,
+-        )
+-        ctc_text = _first_text(ctc_texts)
+-
+-        self.model.cur_decoder = "rnnt"
+-        # Add a small retry for RNNT to handle transient failures
+-        try:
+-            rnnt_texts = self.model.transcribe([clip_path], batch_size=1, language_id=self.language_id)
+-            rnnt_text = _first_text(rnnt_texts)
+-        except Exception as e:
+-            logger.warning("RNNT transcription failed, falling back to CTC: %s", e)
+-            rnnt_text = ""
++        """Serialized across ALL callers -- see the lock below.
++
++        WHY THIS IS LOCKED
++        ------------------
++        `cur_decoder` is an attribute of the ONE shared model instance (see
++        the class docstring), and the two passes below select a decoder by
++        MUTATING it and then immediately reading it back inside
++        .transcribe(). That is a read-modify-write on process-wide state.
++
++        transcribe_utterance() dispatches this through asyncio.to_thread, so
++        with two callers mid-turn at the same time the interleaving is:
++
++            caller A: cur_decoder = "ctc"
++            caller B: cur_decoder = "rnnt"      <-- clobbers A
++            caller A: transcribe()              <-- runs RNNT, stored as ctc_text
++            caller B: transcribe()              <-- runs RNNT, correct by luck
++
++        Nothing raises. A gets an RNNT transcript filed as its CTC result,
++        so decoder_agreement below is computed between two RNNT outputs and
++        reports a confident ~1.0 for a comparison that never happened. The
++        failure needs two overlapping calls to appear at all, which is why
++        it is invisible in single-caller testing and shows up only at the
++        busiest hour -- exactly when it is hardest to diagnose.
++
++        The lock spans the WHOLE method rather than each pass separately.
++        Two narrower critical sections would also close the race, but on a
++        single GPU concurrent .transcribe() calls do not run in parallel
++        anyway -- they time-slice the same device while each holding its own
++        set of activations resident. Serializing turns that into a fair,
++        predictable queue and keeps peak VRAM at one inference's worth,
++        which matters here because ASR shares a 24GB card with Qwen (~6.6GB
++        resident) and TTS. Bounded waiting beats unbounded thrash.
++
++        The cleaner long-term fix is to stop selecting the decoder by
++        mutation at all -- either two model handles, or passing the decoder
++        per call -- which would let this run concurrently. That is a larger
++        change against the AI4Bharat fork's API and is deliberately not
++        attempted here.
++        """
++        with self._infer_lock:
++            self.model.cur_decoder = "ctc"
++            ctc_texts = self.model.transcribe(
++                [clip_path], batch_size=1, logprobs=False, language_id=self.language_id,
++            )
++            ctc_text = _first_text(ctc_texts)
++
++            self.model.cur_decoder = "rnnt"
++            # Add a small retry for RNNT to handle transient failures
++            try:
++                rnnt_texts = self.model.transcribe([clip_path], batch_size=1, language_id=self.language_id)
++                rnnt_text = _first_text(rnnt_texts)
++            except Exception as e:
++                logger.warning("RNNT transcription failed, falling back to CTC: %s", e)
++                rnnt_text = ""
+ 
+         return ctc_text, rnnt_text
+ 
+diff --git a/agent/llm.py b/agent/llm.py
+index 13dfb80..68539b0 100644
+--- a/agent/llm.py
++++ b/agent/llm.py
+@@ -28,12 +28,73 @@ from __future__ import annotations
+ 
+ import datetime
+ import json
++import os
++import random
+ import time
+ import urllib.request
+ 
+ OLLAMA_URL = "http://localhost:11434/api/generate"
+ OLLAMA_MODEL = "qwen2.5:7b"
+ 
++# PER-ATTEMPT ceiling, and the ceiling for the WHOLE turn across retries.
++#
++# These replace a bare 90s per-attempt timeout with no total cap. With
++# max_retries=2 (three attempts) that arrangement allowed a single turn to
++# occupy a worker for 270 SECONDS -- four and a half minutes of a live phone
++# call spent in silence behind the half-duplex gate, long past the point any
++# caller has hung up, while still holding its thread and its slot in Ollama's
++# queue the entire time.
++#
++# The 90s figure was calibrated against a COLD model: llm.py measured a
++# cold-loaded qwen2.5:7b at 47s just to answer "Say OK". That is the wrong
++# thing to size for now. OLLAMA_KEEP_ALIVE=-1 (see deploy/env.vast.sh) pins
++# the model resident, so cold starts are a startup-only event, and a warm
++# generation for this prompt measures ~1-3s.
++#
++# What actually produces a slow turn today is QUEUEING, not loading:
++# OLLAMA_NUM_PARALLEL=2 means only two generations run at once and the rest
++# wait INSIDE Ollama where this process cannot see them. A caller stuck in
++# that queue looks exactly like a cold start from here -- which is why a
++# timeout sized for cold starts is precisely the wrong backstop for it. It
++# lets the queue grow instead of shedding load, and every retry that fires
++# adds another entry to the same queue it is already stuck behind.
++#
++# 20s is still ~7x the warm path, so it does not trip on normal slowness; it
++# only fires when something is genuinely wrong. The 25s total budget is the
++# real protection: it bounds the whole turn regardless of how the retries
++# fall, so failing fast to the "একটু সমস্যা হচ্ছে" apology beats holding a
++# caller in silence. Both are env-tunable so they can be tightened against
++# real peak traffic without a redeploy.
++OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "20"))
++OLLAMA_TURN_BUDGET_S = float(os.environ.get("OLLAMA_TURN_BUDGET_S", "25"))
++
++# Retry backoff. Previously there was none: a failed attempt re-fired the
++# instant it returned.
++#
++# That is the wrong reflex against this particular dependency. The failure
++# being retried is usually not "the request was lost" but "Ollama is at
++# OLLAMA_NUM_PARALLEL and everything else is queued behind it". Retrying
++# immediately adds another entry to the very queue that caused the failure,
++# and because every concurrent caller's retries fire on the same schedule
++# they arrive together -- a thundering herd, synchronized by the shared
++# outage that produced it. Load spikes hardest exactly when the service is
++# least able to absorb it.
++#
++# Exponential growth spreads the retries out; the jitter de-synchronizes
++# callers from each other so they stop arriving in a block. Both are small
++# because the whole turn budget is only OLLAMA_TURN_BUDGET_S -- this is
++# breathing room between attempts, not a real hold-off, and the sleep below
++# is always clamped so it can never eat the budget the next attempt needs.
++_BACKOFF_BASE_S = 0.25
++_BACKOFF_CAP_S = 2.0
++_BACKOFF_JITTER_S = 0.25
++
++
++def _backoff_s(attempt: int) -> float:
++    """Delay before the attempt AFTER this one. attempt is 1-based."""
++    return (min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S)
++            + random.uniform(0.0, _BACKOFF_JITTER_S))
++
+ VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment", "doctors_by_department", "smalltalk", "unclear"}
+ 
+ SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's Bengali phone assistant. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in Bengali script.
+@@ -80,12 +141,9 @@ class ExtractionError(Exception):
+     pass
+ 
+ 
+-def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
+-    # 90s, not 20s: a cold-loaded Qwen2.5:7b (Ollama unloaded it after its
+-    # default 5-minute idle timeout) measured at 47s just to answer "Say
+-    # OK" on this pod. The real fix is OLLAMA_KEEP_ALIVE keeping the model
+-    # resident (see setup docs) so this path is rarely hit in practice --
+-    # this margin is a backstop for whenever it still is.
++def _call_ollama(prompt: str, timeout_s: float = OLLAMA_TIMEOUT_S) -> str:
++    # See OLLAMA_TIMEOUT_S / OLLAMA_TURN_BUDGET_S above for why this is no
++    # longer the old cold-start-sized 90s.
+     payload = json.dumps({
+         "model": OLLAMA_MODEL,
+         "prompt": prompt,
+@@ -130,23 +188,54 @@ def extract_intent(transcript_bn: str, max_retries: int = 2) -> tuple[dict, dict
+     )
+     prompt = f"{system_prompt}\n\nCALLER UTTERANCE (Bengali, ASR output):\n{transcript_bn}\n\nJSON:"
+ 
+-    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": []}
++    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "budget_exhausted": False}
+     last_error = None
+ 
++    # monotonic, not time.time(): this measures a duration, and a wall-clock
++    # step (NTP correction) must not be able to extend or collapse a live
++    # caller's budget.
++    deadline = time.monotonic() + OLLAMA_TURN_BUDGET_S
++
+     for attempt in range(1, max_retries + 2):
++        remaining = deadline - time.monotonic()
++        # Never start an attempt that cannot meaningfully finish. Without
++        # this the last retry fires with a sliver of budget, fails on
++        # timeout, and buys nothing except one more entry in Ollama's queue
++        # at the exact moment that queue is what is already hurting.
++        if remaining <= 0.5:
++            diagnostics["budget_exhausted"] = True
++            diagnostics["errors"].append(
++                f"turn budget {OLLAMA_TURN_BUDGET_S:.0f}s exhausted before attempt {attempt}",
++            )
++            break
++
+         diagnostics["attempts"] = attempt
+-        t0 = time.time()
++        t0 = time.monotonic()
+         try:
+-            raw = _call_ollama(prompt)
+-            diagnostics["total_time_s"] += time.time() - t0
++            # Clamp to whatever budget is actually left, so no single
++            # attempt can overrun the turn as a whole.
++            raw = _call_ollama(prompt, timeout_s=min(OLLAMA_TIMEOUT_S, remaining))
++            diagnostics["total_time_s"] += time.monotonic() - t0
+             data = json.loads(raw)
+             ok, errors = _validate(data)
+             if not ok:
+                 raise ValueError(f"schema validation failed: {errors}")
+             return data, diagnostics
+         except Exception as e:  # noqa: BLE001 - retry on anything, log it
+-            diagnostics["total_time_s"] += time.time() - t0
++            diagnostics["total_time_s"] += time.monotonic() - t0
+             last_error = e
+             diagnostics["errors"].append(f"attempt {attempt}: {type(e).__name__}: {e}")
+ 
+-    raise ExtractionError(f"intent extraction failed after {diagnostics['attempts']} attempts: {last_error}")
++            # Back off before the next attempt, clamped so the wait can never
++            # consume budget the retry itself needs. Blocking sleep is fine:
++            # this runs on the dedicated HTTP pool (agent/executors.py), not
++            # on the event loop and not on the audio path.
++            budget_left = deadline - time.monotonic()
++            if budget_left > 0.5:
++                time.sleep(min(_backoff_s(attempt), budget_left - 0.5))
++
++    raise ExtractionError(
++        f"intent extraction failed after {diagnostics['attempts']} attempt(s) in "
++        f"{diagnostics['total_time_s']:.1f}s"
++        f"{' (turn budget exhausted)' if diagnostics['budget_exhausted'] else ''}: {last_error}",
++    )
+diff --git a/agent/semantic_cache.py b/agent/semantic_cache.py
+index 9d33796..2f7311b 100644
+--- a/agent/semantic_cache.py
++++ b/agent/semantic_cache.py
+@@ -49,6 +49,8 @@ import time
+ import urllib.error
+ import urllib.request
+ 
++import numpy as np
++
+ logger = logging.getLogger("semantic_cache")
+ 
+ OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
+@@ -183,10 +185,37 @@ def _unit(vec: list[float]) -> list[float]:
+ 
+ 
+ class SemanticCache:
+-    """Small, in-process, thread-safe. Brute-force scan on purpose: at the
+-    capped size a full pass is ~2M multiply-adds, microseconds, and far
+-    cheaper to reason about (and to evict correctly) than standing up a
+-    vector store for what is at most a few thousand short questions."""
++    """Small, in-process, thread-safe. Brute-force scan on purpose: no
++    vector store to stand up for what is at most a few thousand short
++    questions, and eviction stays trivial to reason about.
++
++    ON "MICROSECONDS" -- THE ESTIMATE THIS CLASS WAS BUILT AROUND
++    ------------------------------------------------------------
++    That was the original justification for scanning while holding the
++    lock, and the arithmetic does not support it. At max_entries=2000 and
++    bge-m3's 1024 dimensions a full pass is ~2M multiply-adds, and in pure
++    Python -- `sum(a * b for a, b in zip(...))` over a list of floats -- that
++    is on the order of 100-300ms, not microseconds. Three to four orders of
++    magnitude out.
++
++    That mattered because the scan ran INSIDE self._lock, alongside
++    _entity_guard's difflib passes, which are also not cheap. So every
++    concurrent caller queued behind every other caller's scan, on a lock
++    taken once per turn. The cache built to save the slowest hop in the turn
++    was quietly adding a serialization point in front of it.
++
++    Two changes fix it without changing any cached-value semantics:
++
++      * vectors are kept as one contiguous float32 matrix, so the scan is a
++        single numpy matmul in C (~1-2ms at this size) instead of a Python
++        loop;
++      * the scan and the entity guard run OUTSIDE the lock. The lock is now
++        only ever held for O(1) dict work and an O(n) matrix rebuild that
++        happens at most once per mutation.
++
++    The matrix is rebuilt lazily, flagged by _matrix_dirty, because
++    _vectors is already rewritten wholesale on every put and drop.
++    """
+ 
+     def __init__(self, threshold: float = DEFAULT_THRESHOLD,
+                  max_entries: int = 2000, ttl_s: float = 6 * 3600):
+@@ -196,6 +225,12 @@ class SemanticCache:
+         self._lock = threading.Lock()
+         self._exact: dict[str, dict] = {}          # normalized text -> entry
+         self._vectors: list[tuple[list[float], str]] = []   # (unit vec, normalized text)
++        # Contiguous float32 mirror of _vectors, so the similarity scan is one
++        # numpy matmul instead of a Python loop. Rebuilt lazily on the first
++        # get() after any mutation; _matrix_dirty is set by every writer.
++        self._matrix: np.ndarray | None = None
++        self._matrix_keys: list[str] = []
++        self._matrix_dirty = False
+         # Vectors computed by a get() that missed, held so the put() that
+         # follows doesn't pay for the same embedding twice. Keyed by text,
+         # NOT a single slot: concurrent calls interleave get/put freely, and
+@@ -217,6 +252,25 @@ class SemanticCache:
+     def _drop_locked(self, key: str):
+         self._exact.pop(key, None)
+         self._vectors = [(v, k) for v, k in self._vectors if k != key]
++        self._matrix_dirty = True
++
++    def _rebuild_matrix_locked(self):
++        """Mirror _vectors into one contiguous array. Callers hold the lock.
++
++        Rebuilt wholesale rather than patched incrementally: _vectors is
++        already rewritten wholesale by every writer, numpy has no cheap
++        in-place row delete, and at 2000x1024 float32 this is ~8MB of C-level
++        copying -- a few milliseconds, paid at most once per mutation.
++        """
++        if self._vectors:
++            self._matrix = np.asarray(
++                [v for v, _ in self._vectors], dtype=np.float32,
++            )
++            self._matrix_keys = [k for _, k in self._vectors]
++        else:
++            self._matrix = None
++            self._matrix_keys = []
++        self._matrix_dirty = False
+ 
+     @staticmethod
+     def _is_l2_eligible(value: dict) -> bool:
+@@ -306,23 +360,49 @@ class SemanticCache:
+                 self.stats["misses"] += 1
+             return None, "miss"
+ 
++        # SNAPSHOT under the lock, SCAN outside it. Taking the matrix is an
++        # O(1) reference grab: writers REPLACE these attributes rather than
++        # mutating in place (see _rebuild_matrix_locked), so the array read
++        # below stays valid even if another thread swaps in a new one
++        # meanwhile. Worst case this turn scores against a snapshot that is
++        # one entry stale, which costs a cache miss -- never a wrong answer.
+         with self._lock:
+-            best_score, best_key = 0.0, None
+-            for vec, cached_key in self._vectors:
+-                score = sum(a * b for a, b in zip(probe, vec))
+-                if score > best_score:
+-                    best_score, best_key = score, cached_key
+-
+-            if best_key is not None and best_score >= self.threshold:
++            if self._matrix_dirty:
++                self._rebuild_matrix_locked()
++            matrix, keys = self._matrix, self._matrix_keys
++
++        best_score, best_key = 0.0, None
++        if matrix is not None and keys:
++            # Both sides are unit vectors (_unit() on store and on probe), so
++            # this dot product IS cosine similarity -- nothing to normalize.
++            scores = matrix @ np.asarray(probe, dtype=np.float32)
++            idx = int(np.argmax(scores))
++            best_score, best_key = float(scores[idx]), keys[idx]
++
++        if best_key is not None and best_score >= self.threshold:
++            with self._lock:
+                 entry = self._exact.get(best_key)
+                 if entry and self._expired(entry):
+                     self._drop_locked(best_key)
+-                elif entry and self._entity_guard(entry["value"], text):
+-                    entry["last_used"] = time.time()
+-                    self.stats["l2_hits"] += 1
+-                    logger.info("semantic cache hit (%.3f): %r ~= %r", best_score, key, best_key)
+-                    return entry["value"], "semantic"
++                    entry = None
++                candidate = entry["value"] if entry else None
++
++            # _entity_guard runs difflib over every window of the utterance,
++            # and it is the second slowest thing that used to hold the lock.
++            # It only reads its two arguments, so it is safe out here.
++            if candidate is not None and self._entity_guard(candidate, text):
++                with self._lock:
++                    # Re-check: the entry could have been evicted while the
++                    # guard ran. Gone means treat this as a miss.
++                    still = self._exact.get(best_key)
++                    if still is not None:
++                        still["last_used"] = time.time()
++                        self.stats["l2_hits"] += 1
++                        logger.info("semantic cache hit (%.3f): %r ~= %r",
++                                    best_score, key, best_key)
++                        return still["value"], "semantic"
+ 
++        with self._lock:
+             self.stats["misses"] += 1
+             # Stash the vector we just paid for, so put() doesn't re-embed.
+             # Bounded: a get() whose put() never arrives (LLM failed, caller
+@@ -330,7 +410,7 @@ class SemanticCache:
+             if len(self._pending) > 64:
+                 self._pending.clear()
+             self._pending[key] = probe
+-            return None, "miss"
++        return None, "miss"
+ 
+     def put(self, text: str, value: dict):
+         key = normalize_text(text)
+@@ -350,6 +430,10 @@ class SemanticCache:
+             self._vectors = [(v, k) for v, k in self._vectors if k != key]
+             if vector is not None and self._is_l2_eligible(value):
+                 self._vectors.append((vector, key))
++            # Set unconditionally: _evict_locked only marks it dirty when it
++            # actually drops something, and the common put changes _vectors
++            # without evicting anything at all.
++            self._matrix_dirty = True
+             self._evict_locked()
+ 
+     def snapshot(self) -> dict:
+diff --git a/agent/tools_client.py b/agent/tools_client.py
+index 54c4f89..5f6de9e 100644
+--- a/agent/tools_client.py
++++ b/agent/tools_client.py
+@@ -17,6 +17,22 @@ import httpx
+ 
+ DEFAULT_TIMEOUT_S = 4.0  # a phone caller will not wait much longer than this per lookup
+ 
++# httpx defaults to max_connections=100. That is far more than clinic-api can
++# actually work on: its endpoints are sync `def`, so FastAPI runs them in a
++# thread pool, and each one needs a SQLAlchemy connection from a pool of
++# pool_size=5 + max_overflow=10 = 15. Opening 100 sockets against a service
++# that can only process ~15 at once does not make anything faster -- it just
++# moves the queue from here (where it is visible and bounded) into clinic-api
++# (where it is neither), and every socket waiting there is still burning this
++# caller's 4-second timeout.
++#
++# 16 sits just above that 15-connection ceiling, so the transport stops being
++# the thing that oversubscribes the database. Keepalive is set to the same
++# number because this is a hot localhost path -- several lookups per turn,
++# every turn -- and there is nothing to gain from tearing connections down
++# between them.
++DEFAULT_LIMITS = httpx.Limits(max_connections=16, max_keepalive_connections=16)
++
+ 
+ class ToolCallError(Exception):
+     """The backing service itself failed -- distinct from a normal
+@@ -26,7 +42,9 @@ class ToolCallError(Exception):
+ class ClinicToolsClient:
+     def __init__(self, base_url: str, timeout_s: float = DEFAULT_TIMEOUT_S):
+         self.base_url = base_url.rstrip("/")
+-        self._client = httpx.AsyncClient(base_url=self.base_url, timeout=timeout_s)
++        self._client = httpx.AsyncClient(
++            base_url=self.base_url, timeout=timeout_s, limits=DEFAULT_LIMITS,
++        )
+ 
+     async def aclose(self):
+         await self._client.aclose()
+diff --git a/agent/tts.py b/agent/tts.py
+index f76dd05..52f73a2 100644
+--- a/agent/tts.py
++++ b/agent/tts.py
+@@ -42,6 +42,23 @@ logger = logging.getLogger("tts")
+ TTS_URL = os.environ.get("TTS_URL", "http://localhost:8002/synthesize")
+ TTS_TIMEOUT_S = float(os.environ.get("TTS_TIMEOUT_S", "30"))
+ 
++# Caps how many synthesis requests this process will have in flight at once.
++#
++# tts_server.py holds a single global _synth_lock around inference (one GPU
++# model, and _render() mutates its shared length_scale immediately before
++# calling it), so the server does exactly ONE synthesis at a time no matter
++# how many arrive. Requests beyond that do not get served faster by being
++# sent -- they just sit on that lock holding a connection open at both ends.
++#
++# 4 keeps the server's queue primed so it is never idle between clips, while
++# stopping a peak-hour burst from opening a connection per caller against a
++# service that can only ever work on one of them.
++TTS_CONCURRENCY = int(os.environ.get("TTS_CONCURRENCY", "4"))
++
++# Process-wide, not per-client: the ceiling belongs to the TTS SERVER, and
++# it does not care how many client objects this process happens to hold.
++_tts_gate = asyncio.Semaphore(TTS_CONCURRENCY)
++
+ FALLBACK_DIR = os.path.join(os.path.dirname(__file__), "..", "static", "fallback_audio")
+ 
+ # Pre-recorded once (see README.md "Recording the fallback set") and
+@@ -55,11 +72,19 @@ FALLBACK_FILES = {
+     "tts_failure": "system_busy.wav",         # reused -- see note below
+ }
+ 
++# Spoken when the process is already at its concurrent-call ceiling and is
++# turning a caller away (see VOICE_AGENT_MAX_CALLS in main.py / main_pcm.py).
++# Defined here, next to the other fixed lines, so both transports say the
++# same words and it gets prewarmed like the rest -- a rejection that has to
++# wait on the vocoder would consume the very capacity it is protecting.
++BUSY_LINE = "দুঃখিত, এই মুহূর্তে সব লাইন ব্যস্ত। একটু পরে আবার ফোন করুন।"
++
+ # Sentences the agent says on fixed paths, synthesized once at startup so
+ # the caller never waits on the vocoder for them. The greeting especially:
+ # it is the first thing on every single call.
+ PREWARM_LINES = [
+     "নমস্কার, কলকাতা কেয়ার ডায়াগনস্টিকসে স্বাগতম। কীভাবে সাহায্য করতে পারি?",
++    BUSY_LINE,
+     "দুঃখিত, শুনতে পাইনি। আবার বলবেন?",
+     "দুঃখিত, বুঝতে পারিনি। আবার একটু বলবেন?",
+     "একটু সমস্যা হচ্ছে, একটু ধরুন।",
+@@ -76,7 +101,18 @@ AUDIO_CACHE_MAX = 400
+ 
+ class TTSClient:
+     def __init__(self, base_url: str = TTS_URL, timeout_s: float = TTS_TIMEOUT_S):
+-        self._client = httpx.AsyncClient(timeout=timeout_s)
++        # Sized to _tts_gate, not to httpx's default of 100. The gate already
++        # caps in-flight requests at TTS_CONCURRENCY, and tts_server.py can
++        # only synthesize one at a time behind its _synth_lock, so a larger
++        # pool would only hold sockets open against work that cannot start.
++        # The +2 is headroom for a connection being retried or torn down.
++        self._client = httpx.AsyncClient(
++            timeout=timeout_s,
++            limits=httpx.Limits(
++                max_connections=TTS_CONCURRENCY + 2,
++                max_keepalive_connections=TTS_CONCURRENCY,
++            ),
++        )
+         self.base_url = base_url
+         self._audio_cache: collections.OrderedDict[str, bytes] = collections.OrderedDict()
+         self._cache_lock = threading.Lock()
+@@ -122,21 +158,51 @@ class TTSClient:
+             return cached
+ 
+         self.stats["misses"] += 1
+-        
+-        # Retry logic for TTS to handle transient failures
+-        max_retries = 2
+-        for attempt in range(max_retries):
++
++        # WHAT IS AND IS NOT WORTH RETRYING
++        # ---------------------------------
++        # This used to retry on bare `Exception`, which meant it retried
++        # TIMEOUTS -- and a timeout here is the one failure where a retry is
++        # actively harmful.
++        #
++        # A timeout does not mean the request was lost. tts_server.py
++        # serializes every synthesis behind one lock, so a slow response
++        # means the server is BUSY and our request is still sitting in that
++        # queue, holding its place. Retrying does not replace it; it appends
++        # a SECOND request for the same text behind the first. Under load
++        # that doubles the queue depth at exactly the moment the queue is
++        # what is already hurting, which makes the next caller more likely to
++        # time out, which makes them retry too. tts_server.py's own comment
++        # on _synth_lock describes this feedback loop and notes it gets more
++        # likely the longer a conversation runs.
++        #
++        # A ConnectError is different: nothing was queued, because nothing
++        # was accepted. That is worth one retry -- it is what a restarting
++        # TTS process looks like.
++        #
++        # Everything else (timeouts, 4xx/5xx) propagates immediately to
++        # main.py's _speak(), which falls back to the pre-recorded clip. A
++        # stiff canned apology now beats correct audio after the caller has
++        # hung up.
++        max_attempts = 2
++        for attempt in range(1, max_attempts + 1):
+             try:
+-                r = await self._client.post(self.base_url, json={"text": spoken, "lang": "bn"})
++                # Gate only the network call. Cache hits returned above are
++                # never gated -- they are the fast path and cost nothing.
++                async with _tts_gate:
++                    r = await self._client.post(
++                        self.base_url, json={"text": spoken, "lang": "bn"},
++                    )
+                 r.raise_for_status()
+                 wav = r.content
+                 self._cache_put(key, wav)
+                 return wav
+-            except Exception as e:
+-                if attempt == max_retries - 1:
++            except httpx.ConnectError as e:
++                if attempt == max_attempts:
+                     raise
+-                logger.warning("TTS attempt %d failed, retrying: %s", attempt + 1, e)
+-                await asyncio.sleep(0.5)  # Small delay before retry
++                logger.warning("TTS connect failed (attempt %d/%d), retrying: %s",
++                               attempt, max_attempts, e)
++                await asyncio.sleep(0.5)
+ 
+     async def prewarm(self):
+         """Best-effort: a failure here must not stop the app from starting.
+diff --git a/agent/vad_stream.py b/agent/vad_stream.py
+index 8aab7db..9be318a 100644
+--- a/agent/vad_stream.py
++++ b/agent/vad_stream.py
+@@ -26,6 +26,7 @@ from __future__ import annotations
+ 
+ import dataclasses
+ import os
++import threading
+ 
+ import torch
+ 
+@@ -72,6 +73,9 @@ class TurnDetector:
+ 
+         self.max_utterance_s = max_utterance_s
+ 
++        # Serializes model inference in poll(). See poll()'s docstring.
++        self._model_lock = threading.Lock()
++
+         if os.path.isdir(_LOCAL_SILERO_REPO):
+             self.model, utils = torch.hub.load(
+                 repo_or_dir=_LOCAL_SILERO_REPO, source="local", model="silero_vad",
+@@ -87,7 +91,43 @@ class TurnDetector:
+     def poll(self, wav_tensor: torch.Tensor, sr: int) -> TurnResult:
+         """wav_tensor: the UNPROCESSED TAIL of the call's buffer only --
+         i.e. audio already consumed by a prior completed turn must not be
+-        included. Index 0 is treated as "now"."""
++        included. Index 0 is treated as "now".
++
++        THREAD SAFETY
++        -------------
++        There is ONE TurnDetector per process (see the class docstring) and
++        main.py dispatches poll() through asyncio.to_thread from EVERY call's
++        poll loop, every POLL_INTERVAL_S. So at N concurrent callers this
++        runs ~2N times a second from arbitrary worker threads against a
++        single shared model.
++
++        That is not safe unsynchronized. Silero's model is stateful: it
++        carries hidden state across the chunks of one pass, and
++        get_speech_timestamps() resets that state at the start of each call
++        and then feeds chunks through it in sequence. Two threads inside it
++        at once means one call's reset lands in the middle of the other's
++        chunk sequence, and both then read hidden state built from the other
++        caller's audio.
++
++        Nothing raises -- the failure is silent and produces WRONG SPEECH
++        BOUNDARIES: an utterance_end_s that does not correspond to where the
++        caller actually stopped. main.py trusts that number to slice the
++        clip for ASR and to advance processed_until_s, so a corrupted
++        boundary either truncates the caller mid-sentence or advances the
++        marker past audio nobody has transcribed. Both present as "it cut me
++        off" / "it missed what I said" at peak, and neither leaves a trace.
++
++        The lock covers only the inference call. Resampling and the arithmetic
++        below touch no shared state and stay outside it.
++
++        SCALING NOTE: this serializes a ~10-50ms operation across all calls,
++        which is comfortable to roughly 20 concurrent callers and becomes a
++        ceiling beyond that. The way past it is per-thread model instances
++        (threading.local + lazy torch.hub.load), which trades ~2MB per pool
++        thread for real parallelism. Not done here because torch.hub.load is
++        itself of uncertain thread safety and the other bottlenecks in the
++        pipeline bite well before this one does.
++        """
+         if sr != 16000:
+             wav_tensor = torch.nn.functional.interpolate(
+                 wav_tensor.view(1, 1, -1), scale_factor=16000 / sr, mode="linear",
+@@ -99,9 +139,10 @@ class TurnDetector:
+         if duration_s < 0.2:
+             return TurnResult(utterance_end_s=None, had_any_speech=False)
+ 
+-        spans = self._get_speech_timestamps(
+-            wav_tensor, self.model, sampling_rate=sr, return_seconds=True,
+-        )
++        with self._model_lock:
++            spans = self._get_speech_timestamps(
++                wav_tensor, self.model, sampling_rate=sr, return_seconds=True,
++            )
+         if not spans:
+             return TurnResult(utterance_end_s=None, had_any_speech=False)
+ 
+diff --git a/clinic-api/db.py b/clinic-api/db.py
+index 78b8e9f..50525f0 100644
+--- a/clinic-api/db.py
++++ b/clinic-api/db.py
+@@ -18,10 +18,28 @@ SQLite has no ownership model to violate -- it is one file. It sits on
+ at simply do not apply: a 74-row read-mostly catalogue, one writer
+ process, no concurrent writers, no replication.
+ 
+-Journal mode is left at the default (DELETE) rather than WAL on purpose.
+-WAL needs a shared-memory index file alongside the database, and that is
+-exactly the primitive a network filesystem is least reliable at. DELETE
+-journalling costs write throughput this workload does not need.
++JOURNAL MODE IS NOW PROVIDER-DEPENDENT
++--------------------------------------
++This file used to pin DELETE journalling unconditionally, reasoning that
++WAL needs a shared-memory index file alongside the database and that is
++exactly the primitive a network filesystem is least reliable at.
++
++That reasoning is correct -- on RunPod, where /workspace is a MooseFS
++network mount. It does NOT hold on vast.ai, where /workspace is the
++instance's own local disk (deploy/env.vast.sh spells this out: "An
++instance's container filesystem IS the rented disk"). So the constraint was
++being inherited by a platform that does not have it.
++
++The cost of getting this wrong is not throughput, it is CONCURRENCY. Under
++DELETE journalling a writer takes an EXCLUSIVE lock on the whole database,
++so one caller booking an appointment blocks every other caller's price and
++availability lookup for the duration of that write. At the busiest hour --
++the most bookings, the most lookups -- that is precisely backwards. WAL
++lets readers continue against the last committed snapshot while a write is
++in flight, which is the property this workload actually needs.
++
++So the default is now chosen per provider, and CLINIC_DB_JOURNAL_MODE
++overrides it explicitly if the detection is ever wrong.
+ 
+ DATABASE_URL still overrides everything, so pointing this back at a real
+ Postgres for production is a one-line environment change.
+@@ -38,12 +56,32 @@ DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_SQLITE_PATH}"
+ 
+ _is_sqlite = DATABASE_URL.startswith("sqlite")
+ 
++# WAL wherever the database is on a local disk, DELETE on a network mount.
++# See the module docstring. deploy/env.vast.sh exports VOICE_AGENT_PROVIDER.
++_DEFAULT_JOURNAL_MODE = "WAL" if os.environ.get("VOICE_AGENT_PROVIDER") == "vast" else "DELETE"
++JOURNAL_MODE = os.environ.get("CLINIC_DB_JOURNAL_MODE", _DEFAULT_JOURNAL_MODE).upper()
++
++# 3s, not the previous 30s.
++#
++# A busy_timeout only decides how long SQLite waits before giving up. It
++# does not decide how long the CALLER waits -- agent/tools_client.py gives
++# up on the whole HTTP request after DEFAULT_TIMEOUT_S = 4.0 seconds. So a
++# 30s busy_timeout could never actually be reached: the voice agent had
++# already abandoned the lookup, spoken its "couldn't check that right now"
++# apology and moved on, while this process sat holding a connection waiting
++# on a lock for another 26 seconds on behalf of nobody.
++#
++# Sizing it UNDER the client's timeout means contention surfaces as a clean,
++# fast SQLite error we can see and log, instead of as a client-side timeout
++# whose cause is invisible from in here.
++BUSY_TIMEOUT_S = float(os.environ.get("CLINIC_DB_BUSY_TIMEOUT_S", "3"))
++
+ engine = create_engine(
+     DATABASE_URL,
+     pool_pre_ping=True,
+     # FastAPI serves requests from a thread pool, so the connection that
+     # opens a session is not always the one that closes it.
+-    connect_args={"check_same_thread": False, "timeout": 30} if _is_sqlite else {},
++    connect_args={"check_same_thread": False, "timeout": BUSY_TIMEOUT_S} if _is_sqlite else {},
+ )
+ 
+ if _is_sqlite:
+@@ -51,9 +89,29 @@ if _is_sqlite:
+     def _sqlite_pragmas(dbapi_conn, _record):
+         cur = dbapi_conn.cursor()
+         # Wait rather than raising "database is locked" the instant another
+-        # connection holds it -- on a network filesystem, lock handoff is
+-        # measured in milliseconds, not microseconds.
+-        cur.execute("PRAGMA busy_timeout=30000")
++        # connection holds it -- lock handoff is measured in milliseconds.
++        cur.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
++
++        # Set UNCONDITIONALLY, including for DELETE.
++        #
++        # journal_mode is a property of the FILE, not the connection, and it
++        # persists. So "DELETE" is only the default for a database that has
++        # never been opened in WAL -- once a file is WAL it stays WAL until
++        # something explicitly changes it back. Skipping the pragma for
++        # DELETE would therefore make CLINIC_DB_JOURNAL_MODE=DELETE a no-op
++        # on exactly the database that most needs it: one already converted
++        # to WAL that has to be rolled back. Always asserting it keeps this
++        # setting authoritative in both directions.
++        cur.execute(f"PRAGMA journal_mode={JOURNAL_MODE}")
++        if JOURNAL_MODE == "WAL":
++            # WAL defaults to synchronous=FULL, which fsyncs the WAL on every
++            # commit and throws away most of what WAL is for. NORMAL is the
++            # standard pairing: it cannot corrupt the database, it only risks
++            # losing the last few commits if the machine loses power
++            # mid-write. For a re-seedable clinic catalogue that is an easy
++            # trade.
++            cur.execute("PRAGMA synchronous=NORMAL")
++
+         cur.execute("PRAGMA foreign_keys=ON")
+         cur.close()
+ 
+diff --git a/clinic-api/main.py b/clinic-api/main.py
+index ad82f7a..a96eb05 100644
+--- a/clinic-api/main.py
++++ b/clinic-api/main.py
+@@ -20,6 +20,7 @@ import uuid
+ from fastapi import FastAPI, Depends, Query
+ from pydantic import BaseModel
+ from sqlalchemy import func
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import Session
+ 
+ from db import get_db, SessionLocal
+@@ -383,14 +384,20 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
+     if req.time_slot not in valid_slots:
+         return {"success": False, "reason": "slot_taken", "alternative_slots": valid_slots[:3]}
+ 
+-    taken = {
++    def _free_slots() -> list[str]:
++        taken = {
++            a.time_slot for a in db.query(Appointment).filter_by(
++                doctor_id=doctor.id, date=req.date,
++            ).all()
++        }
++        return [s for s in valid_slots if s not in taken][:3]
++
++    if req.time_slot in {
+         a.time_slot for a in db.query(Appointment).filter_by(
+             doctor_id=doctor.id, date=req.date,
+         ).all()
+-    }
+-    if req.time_slot in taken:
+-        free = [s for s in valid_slots if s not in taken][:3]
+-        return {"success": False, "reason": "slot_taken", "alternative_slots": free}
++    }:
++        return {"success": False, "reason": "slot_taken", "alternative_slots": _free_slots()}
+ 
+     confirmation_id = f"KCD-{req.date.replace('-', '')}-{uuid.uuid4().hex[:4].upper()}"
+     appt = Appointment(
+@@ -398,8 +405,51 @@ def book_appointment(req: BookingRequest, db: Session = Depends(get_db)):
+         time_slot=req.time_slot, patient_name=req.patient_name, phone=req.phone,
+         created_at=datetime.datetime.now(),
+     )
+-    db.add(appt)
+-    db.commit()
++
++    # THE CHECK ABOVE IS NOT ATOMIC WITH THIS INSERT.
++    #
++    # Two callers being told the same slot is free, then both booking it, is
++    # a genuine interleaving -- and it is MOST likely at peak, when the same
++    # popular slots are being offered to several people at once.
++    #
++    # models.py's UniqueConstraint("doctor_id", "date", "time_slot") already
++    # makes that safe for the DATA: the second insert cannot succeed. What it
++    # did not do was make it safe for the CALLER. The IntegrityError was
++    # uncaught, so it surfaced as a 500, which tools_client.py turns into a
++    # ToolCallError, which main.py speaks as "এই মুহূর্তে দেখতে পারছি না" --
++    # "I can't check right now". That is misleading: the system checked
++    # perfectly well and knows exactly what happened.
++    #
++    # Catching it here turns the race into the honest answer the caller
++    # deserves -- "that slot just went, here are three others" -- reusing the
++    # same slot_taken shape reply_templates.booking_reply() already handles.
++    try:
++        db.add(appt)
++        db.commit()
++    except IntegrityError:
++        db.rollback()
++        if req.time_slot in {
++            a.time_slot for a in db.query(Appointment).filter_by(
++                doctor_id=doctor.id, date=req.date,
++            ).all()
++        }:
++            logging.getLogger("clinic-api").info(
++                "slot %s on %s for doctor %s lost a booking race -- offering alternatives",
++                req.time_slot, req.date, doctor.name,
++            )
++            return {"success": False, "reason": "slot_taken",
++                    "alternative_slots": _free_slots()}
++
++        # The slot is still free, so the collision was on the only other
++        # unique column, confirmation_id -- a 16^4 UUID-suffix clash. Do not
++        # dress this up as slot_taken; it is not, and telling the caller to
++        # pick another time would be a lie. booking_reply() renders an
++        # unrecognised reason as its generic "couldn't book" message.
++        logging.getLogger("clinic-api").warning(
++            "unexpected IntegrityError booking %s on %s (slot still free) -- "
++            "likely confirmation_id collision", req.time_slot, req.date,
++        )
++        return {"success": False, "reason": "booking_failed"}
+ 
+     return {
+         "success": True, "confirmation_id": confirmation_id,
+diff --git a/main.py b/main.py
+index 644e637..8dcef54 100644
+--- a/main.py
++++ b/main.py
+@@ -67,6 +67,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+ from fastapi.staticfiles import StaticFiles
+ 
+ from agent.asr import TurnASR
++from agent.executors import asr_gate, run_http, shutdown as _shutdown_http_pool
+ from agent.llm import extract_intent, ExtractionError
+ from agent.reply_templates import (
+     missing_slot_prompt, test_rate_reply, doctor_availability_reply, booking_reply,
+@@ -76,7 +77,7 @@ from agent.fast_path import Catalogue, FastPath
+ from agent.semantic_cache import SemanticCache, embed as _embed_probe
+ from agent.slot_parse import parse_date, parse_time, parse_phone, is_negative
+ from agent.tools_client import ClinicToolsClient, ToolCallError
+-from agent.tts import TTSClient
++from agent.tts import BUSY_LINE, TTSClient
+ from agent.vad_stream import TurnDetector
+ 
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+@@ -109,6 +110,32 @@ RESYNC_REWIND_S = 0.25
+ 
+ CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
+ 
++# ADMISSION CONTROL -- the ceiling on simultaneous calls in this process.
++#
++# Every other limit added for peak hour (asr_gate, the TTS gate, the HTTP
++# pool, Ollama's own queue) bounds ONE stage. None of them bounds how many
++# callers are admitted in the first place, so without this the system's
++# answer to overload is to accept everybody and let every caller degrade
++# together -- longer ASR queues, longer Ollama queues, longer TTS queues, for
++# all of them at once.
++#
++# That is the exact outcome the peak-hour requirement rules out. Quality
++# stops being a function of when you ring only if the system is willing to
++# say "not right now" to the caller who would push it past what it can serve
++# well. A caller told plainly that the lines are busy can ring back in a
++# minute; a caller silently placed in a queue that degrades everyone gets a
++# worse experience AND makes it worse for the people already on the line.
++#
++# 12 is a starting point, not a measurement -- it is deliberately env-tunable
++# so it can be set from a real load test (tools/bench_transport.py) rather
++# than from this guess. Raise it once the stages behind it are known to keep
++# up; lower it the moment they do not.
++MAX_CONCURRENT_CALLS = int(os.environ.get("VOICE_AGENT_MAX_CALLS", "12"))
++
++# Plain int, no lock: FastAPI runs one event loop, and every read/modify pair
++# below is free of awaits, so it cannot interleave.
++_active_calls = 0
++
+ # Order also doubles as PRIORITY: the field _next_missing() asks for next
+ # when several are still empty. doctor_name first because it is almost
+ # always already known by the time booking starts (named directly, or
+@@ -144,7 +171,7 @@ async def _startup():
+     # only for the opening minutes of the process -- healthy-looking logs,
+     # zero semantic hits. OLLAMA_KEEP_ALIVE=-1 keeps it resident after.
+     try:
+-        await asyncio.to_thread(_embed_probe, "warmup")
++        await run_http(_embed_probe, "warmup")
+         logger.info("embedding model warm")
+     except Exception as e:  # noqa: BLE001 - cache is optional, the call is not
+         logger.warning("embedding warmup failed, cache starts L1-only: %s", e)
+@@ -174,6 +201,9 @@ async def _shutdown():
+         await _tools.aclose()
+     if _tts:
+         await _tts.aclose()
++    # wait=False: a worker parked on a socket read to Ollama must not hold
++    # the process open past shutdown.
++    _shutdown_http_pool()
+ 
+ 
+ @app.get("/api/health")
+@@ -182,6 +212,11 @@ async def health():
+         "status": "ok",
+         "asr_loaded": _asr is not None,
+         "clinic_api_base": CLINIC_API_BASE,
++        # Surfaced so deploy/status.sh shows headroom at a glance -- "are we
++        # near the ceiling" is the first question at peak, and it should not
++        # require reading logs to answer.
++        "active_calls": _active_calls,
++        "max_calls": MAX_CONCURRENT_CALLS,
+     }
+ 
+ 
+@@ -335,6 +370,9 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
+     # where the embedding route had 0.03 -- see agent/fast_path.py. This
+     # returns None whenever it is not sure, which is the common case for
+     # anything except a routine price or availability question.
++    # to_thread (default pool) for this one: it is local CPU work over the
++    # 74-row catalogue with no network hop, so it belongs with the audio
++    # path, not behind the blocking-HTTP pool. See agent/executors.py.
+     if _fast_path is not None:
+         hit = await asyncio.to_thread(_fast_path.resolve, text)
+         if hit is not None:
+@@ -342,15 +380,21 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
+                         session.call_id, hit.intent, hit.confidence)
+             return hit.as_llm_shape()
+ 
+-    cached, how = await asyncio.to_thread(_intent_cache.get, text)
++    # The three calls below all make BLOCKING urllib requests to Ollama --
++    # cache.get/put embed via bge-m3, extract_intent generates via Qwen --
++    # so they run on the dedicated HTTP pool. On the shared default pool a
++    # burst of concurrent callers parks every worker on a socket read and
++    # the audio path (VAD polls, torchaudio, ASR) stops running for EVERY
++    # call, not just the slow ones. agent/executors.py has the full write-up.
++    cached, how = await run_http(_intent_cache.get, text)
+     if cached is not None:
+         logger.info("[%s] intent cache %s hit", session.call_id, how)
+         return cached
+ 
+-    data, diag = await asyncio.to_thread(extract_intent, text)
++    data, diag = await run_http(extract_intent, text)
+     logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
+                 session.call_id, diag["total_time_s"], diag["attempts"])
+-    await asyncio.to_thread(_intent_cache.put, text, data)
++    await run_http(_intent_cache.put, text, data)
+     return data
+ 
+ 
+@@ -614,7 +658,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
+     interleave, even if the caller starts talking again immediately."""
+     async with session.dispatch_lock:
+         try:
+-            asr_result = await _asr.transcribe_utterance(utterance_wav)
++            # asr_gate bounds how many turns may occupy a thread-pool worker
++            # waiting on the GPU. dispatch_lock above is per-CALL ordering;
++            # this is process-wide admission control. See agent/executors.py.
++            async with asr_gate:
++                asr_result = await _asr.transcribe_utterance(utterance_wav)
+         finally:
+             with contextlib.suppress(OSError):
+                 os.remove(utterance_wav)
+@@ -856,11 +904,43 @@ async def _handle_control(session: CallSession, raw: str):
+         session.release_gate()
+ 
+ 
++async def _reject_at_capacity(ws: WebSocket):
++    """Turn a caller away in words, not by dropping the socket.
++
++    A bare close looks to the caller like the line is broken. Saying it --
++    and saying it fast, from the prewarmed TTS cache -- is the difference
++    between "this service is down" and "call back in a minute"."""
++    logger.warning("at capacity (%d/%d active) -- refusing call",
++                   _active_calls, MAX_CONCURRENT_CALLS)
++    with contextlib.suppress(Exception):
++        await ws.send_text(json.dumps({"sender": "AI", "text": BUSY_LINE},
++                                      ensure_ascii=False))
++    with contextlib.suppress(Exception):
++        # Cache hit in the normal case (BUSY_LINE is prewarmed), so this does
++        # not queue behind the TTS gate it is protecting. If TTS is down
++        # entirely the text above already went out; audio is a bonus.
++        await ws.send_bytes(await _tts.synthesize(BUSY_LINE))
++    # Give the client a moment to receive both frames before the close lands.
++    await asyncio.sleep(0.25)
++    with contextlib.suppress(Exception):
++        await ws.close()
++
++
+ @app.websocket("/ws/audio")
+ async def ws_audio(ws: WebSocket):
++    global _active_calls
+     await ws.accept()
++
++    # No await between this check and the increment below, so the count
++    # cannot be overshot by a concurrently-arriving call.
++    if _active_calls >= MAX_CONCURRENT_CALLS:
++        await _reject_at_capacity(ws)
++        return
++    _active_calls += 1
++
+     session = CallSession(ws)
+-    logger.info("[%s] call started", session.call_id)
++    logger.info("[%s] call started (%d/%d active)",
++                session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+     poll_task = asyncio.create_task(_turn_poll_loop(session))
+ 
+     try:
+@@ -882,7 +962,12 @@ async def ws_audio(ws: WebSocket):
+         with contextlib.suppress(asyncio.CancelledError):
+             await poll_task
+         session.cleanup()
+-        logger.info("[%s] call ended", session.call_id)
++        # Must be in finally, and must pair with the increment above: a slot
++        # leaked on a crash path is a permanent reduction in capacity that
++        # only a restart clears.
++        _active_calls -= 1
++        logger.info("[%s] call ended (%d/%d active)",
++                    session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+ 
+ 
+ app.mount("/", StaticFiles(directory="static", html=True), name="static")
+diff --git a/main_pcm.py b/main_pcm.py
+index 363b78a..cf79b03 100644
+--- a/main_pcm.py
++++ b/main_pcm.py
+@@ -83,6 +83,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+ from fastapi.staticfiles import StaticFiles
+ 
+ from agent.asr import TurnASR
++from agent.executors import asr_gate, run_http, shutdown as _shutdown_http_pool
+ from agent.llm import extract_intent, ExtractionError
+ from agent.reply_templates import (
+     missing_slot_prompt, test_rate_reply, doctor_availability_reply, booking_reply,
+@@ -92,7 +93,7 @@ from agent.fast_path import Catalogue, FastPath
+ from agent.semantic_cache import SemanticCache, embed as _embed_probe
+ from agent.slot_parse import parse_date, parse_time, parse_phone, is_negative
+ from agent.tools_client import ClinicToolsClient, ToolCallError
+-from agent.tts import TTSClient
++from agent.tts import BUSY_LINE, TTSClient
+ from agent.vad_stream import TurnDetector
+ 
+ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+@@ -125,6 +126,32 @@ RESYNC_REWIND_S = 0.25
+ 
+ CLINIC_API_BASE = os.environ.get("CLINIC_API_BASE", "http://localhost:8080")
+ 
++# ADMISSION CONTROL -- the ceiling on simultaneous calls in this process.
++#
++# Every other limit added for peak hour (asr_gate, the TTS gate, the HTTP
++# pool, Ollama's own queue) bounds ONE stage. None of them bounds how many
++# callers are admitted in the first place, so without this the system's
++# answer to overload is to accept everybody and let every caller degrade
++# together -- longer ASR queues, longer Ollama queues, longer TTS queues, for
++# all of them at once.
++#
++# That is the exact outcome the peak-hour requirement rules out. Quality
++# stops being a function of when you ring only if the system is willing to
++# say "not right now" to the caller who would push it past what it can serve
++# well. A caller told plainly that the lines are busy can ring back in a
++# minute; a caller silently placed in a queue that degrades everyone gets a
++# worse experience AND makes it worse for the people already on the line.
++#
++# 12 is a starting point, not a measurement -- it is deliberately env-tunable
++# so it can be set from a real load test (tools/bench_transport.py) rather
++# than from this guess. Raise it once the stages behind it are known to keep
++# up; lower it the moment they do not.
++MAX_CONCURRENT_CALLS = int(os.environ.get("VOICE_AGENT_MAX_CALLS", "12"))
++
++# Plain int, no lock: FastAPI runs one event loop, and every read/modify pair
++# below is free of awaits, so it cannot interleave.
++_active_calls = 0
++
+ # Order also doubles as PRIORITY: the field _next_missing() asks for next
+ # when several are still empty. doctor_name first because it is almost
+ # always already known by the time booking starts (named directly, or
+@@ -160,7 +187,7 @@ async def _startup():
+     # only for the opening minutes of the process -- healthy-looking logs,
+     # zero semantic hits. OLLAMA_KEEP_ALIVE=-1 keeps it resident after.
+     try:
+-        await asyncio.to_thread(_embed_probe, "warmup")
++        await run_http(_embed_probe, "warmup")
+         logger.info("embedding model warm")
+     except Exception as e:  # noqa: BLE001 - cache is optional, the call is not
+         logger.warning("embedding warmup failed, cache starts L1-only: %s", e)
+@@ -190,6 +217,9 @@ async def _shutdown():
+         await _tools.aclose()
+     if _tts:
+         await _tts.aclose()
++    # wait=False: a worker parked on a socket read to Ollama must not hold
++    # the process open past shutdown.
++    _shutdown_http_pool()
+ 
+ 
+ @app.get("/api/health")
+@@ -198,6 +228,11 @@ async def health():
+         "status": "ok",
+         "asr_loaded": _asr is not None,
+         "clinic_api_base": CLINIC_API_BASE,
++        # Surfaced so deploy/status.sh shows headroom at a glance -- "are we
++        # near the ceiling" is the first question at peak, and it should not
++        # require reading logs to answer.
++        "active_calls": _active_calls,
++        "max_calls": MAX_CONCURRENT_CALLS,
+     }
+ 
+ 
+@@ -344,6 +379,9 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
+     # where the embedding route had 0.03 -- see agent/fast_path.py. This
+     # returns None whenever it is not sure, which is the common case for
+     # anything except a routine price or availability question.
++    # to_thread (default pool) for this one: it is local CPU work over the
++    # 74-row catalogue with no network hop, so it belongs with the audio
++    # path, not behind the blocking-HTTP pool. See agent/executors.py.
+     if _fast_path is not None:
+         hit = await asyncio.to_thread(_fast_path.resolve, text)
+         if hit is not None:
+@@ -351,15 +389,21 @@ async def _resolve_intent(session: CallSession, text: str) -> dict:
+                         session.call_id, hit.intent, hit.confidence)
+             return hit.as_llm_shape()
+ 
+-    cached, how = await asyncio.to_thread(_intent_cache.get, text)
++    # The three calls below all make BLOCKING urllib requests to Ollama --
++    # cache.get/put embed via bge-m3, extract_intent generates via Qwen --
++    # so they run on the dedicated HTTP pool. On the shared default pool a
++    # burst of concurrent callers parks every worker on a socket read and
++    # the audio path (VAD polls, torchaudio, ASR) stops running for EVERY
++    # call, not just the slow ones. agent/executors.py has the full write-up.
++    cached, how = await run_http(_intent_cache.get, text)
+     if cached is not None:
+         logger.info("[%s] intent cache %s hit", session.call_id, how)
+         return cached
+ 
+-    data, diag = await asyncio.to_thread(extract_intent, text)
++    data, diag = await run_http(extract_intent, text)
+     logger.info("[%s] intent extracted in %.2fs (%d attempt(s))",
+                 session.call_id, diag["total_time_s"], diag["attempts"])
+-    await asyncio.to_thread(_intent_cache.put, text, data)
++    await run_http(_intent_cache.put, text, data)
+     return data
+ 
+ 
+@@ -623,7 +667,11 @@ async def _dispatch_turn(session: CallSession, utterance_wav: str):
+     interleave, even if the caller starts talking again immediately."""
+     async with session.dispatch_lock:
+         try:
+-            asr_result = await _asr.transcribe_utterance(utterance_wav)
++            # asr_gate bounds how many turns may occupy a thread-pool worker
++            # waiting on the GPU. dispatch_lock above is per-CALL ordering;
++            # this is process-wide admission control. See agent/executors.py.
++            async with asr_gate:
++                asr_result = await _asr.transcribe_utterance(utterance_wav)
+         finally:
+             with contextlib.suppress(OSError):
+                 os.remove(utterance_wav)
+@@ -871,11 +919,43 @@ async def _handle_control(session: CallSession, raw: str):
+                     msg.get("format", "pcm_s16le"), rate)
+ 
+ 
++async def _reject_at_capacity(ws: WebSocket):
++    """Turn a caller away in words, not by dropping the socket.
++
++    A bare close looks to the caller like the line is broken. Saying it --
++    and saying it fast, from the prewarmed TTS cache -- is the difference
++    between "this service is down" and "call back in a minute"."""
++    logger.warning("at capacity (%d/%d active) -- refusing call",
++                   _active_calls, MAX_CONCURRENT_CALLS)
++    with contextlib.suppress(Exception):
++        await ws.send_text(json.dumps({"sender": "AI", "text": BUSY_LINE},
++                                      ensure_ascii=False))
++    with contextlib.suppress(Exception):
++        # Cache hit in the normal case (BUSY_LINE is prewarmed), so this does
++        # not queue behind the TTS gate it is protecting. If TTS is down
++        # entirely the text above already went out; audio is a bonus.
++        await ws.send_bytes(await _tts.synthesize(BUSY_LINE))
++    # Give the client a moment to receive both frames before the close lands.
++    await asyncio.sleep(0.25)
++    with contextlib.suppress(Exception):
++        await ws.close()
++
++
+ @app.websocket("/ws/audio")
+ async def ws_audio(ws: WebSocket):
++    global _active_calls
+     await ws.accept()
++
++    # No await between this check and the increment below, so the count
++    # cannot be overshot by a concurrently-arriving call.
++    if _active_calls >= MAX_CONCURRENT_CALLS:
++        await _reject_at_capacity(ws)
++        return
++    _active_calls += 1
++
+     session = CallSession(ws)
+-    logger.info("[%s] call started", session.call_id)
++    logger.info("[%s] call started (%d/%d active)",
++                session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+     poll_task = asyncio.create_task(_turn_poll_loop(session))
+ 
+     try:
+@@ -897,7 +977,12 @@ async def ws_audio(ws: WebSocket):
+         with contextlib.suppress(asyncio.CancelledError):
+             await poll_task
+         session.cleanup()
+-        logger.info("[%s] call ended", session.call_id)
++        # Must be in finally, and must pair with the increment above: a slot
++        # leaked on a crash path is a permanent reduction in capacity that
++        # only a restart clears.
++        _active_calls -= 1
++        logger.info("[%s] call ended (%d/%d active)",
++                    session.call_id, _active_calls, MAX_CONCURRENT_CALLS)
+ 
+ 
+ app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")

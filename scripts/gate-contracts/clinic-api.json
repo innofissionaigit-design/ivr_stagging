@@ -1,0 +1,202 @@
+{
+  "GET /api/health": {
+    "body": null,
+    "params": []
+  },
+  "GET /api/v1/appointments/{confirmation_id}/notifications": {
+    "body": null,
+    "params": [
+      "path:confirmation_id:required"
+    ]
+  },
+  "GET /api/v1/catalogue": {
+    "body": null,
+    "params": []
+  },
+  "GET /api/v1/doctors/availability": {
+    "body": null,
+    "params": [
+      "query:date:optional",
+      "query:name:required"
+    ]
+  },
+  "GET /api/v1/doctors/by-department": {
+    "body": null,
+    "params": [
+      "query:date:optional",
+      "query:department:required"
+    ]
+  },
+  "GET /api/v1/history/audit": {
+    "body": null,
+    "params": [
+      "query:limit:optional",
+      "query:outcome:optional"
+    ]
+  },
+  "GET /api/v1/notifications/failures": {
+    "body": null,
+    "params": [
+      "query:include_acknowledged:optional",
+      "query:include_skipped:optional",
+      "query:stale_minutes:optional"
+    ]
+  },
+  "GET /api/v1/tests/search": {
+    "body": null,
+    "params": [
+      "query:name:required"
+    ]
+  },
+  "POST /api/v1/appointments": {
+    "body": {
+      "properties": [
+        "date",
+        "doctor_name",
+        "patient_name",
+        "phone",
+        "time_slot"
+      ],
+      "required": [
+        "date",
+        "doctor_name",
+        "patient_name",
+        "phone",
+        "time_slot"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/appointments/{confirmation_id}/cancel": {
+    "body": {
+      "properties": [
+        "reason"
+      ],
+      "required": []
+    },
+    "params": [
+      "path:confirmation_id:required"
+    ]
+  },
+  "POST /api/v1/appointments/{confirmation_id}/reschedule": {
+    "body": {
+      "properties": [
+        "date",
+        "time_slot"
+      ],
+      "required": [
+        "date",
+        "time_slot"
+      ]
+    },
+    "params": [
+      "path:confirmation_id:required"
+    ]
+  },
+  "POST /api/v1/history/read": {
+    "body": {
+      "properties": [
+        "call_id",
+        "token"
+      ],
+      "required": [
+        "token"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/history/refusal": {
+    "body": {
+      "properties": [
+        "call_id",
+        "phone",
+        "reason"
+      ],
+      "required": [
+        "phone",
+        "reason"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/history/verify": {
+    "body": {
+      "properties": [
+        "answer",
+        "call_id",
+        "factor",
+        "phone"
+      ],
+      "required": [
+        "answer",
+        "factor",
+        "phone"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/history/verify/begin": {
+    "body": {
+      "properties": [
+        "call_id",
+        "phone"
+      ],
+      "required": [
+        "phone"
+      ]
+    },
+    "params": []
+  },
+  "POST /api/v1/notifications/receipt": {
+    "body": {
+      "properties": [
+        "client_ref",
+        "error_code",
+        "error_detail",
+        "message_id",
+        "provider_message_id",
+        "status"
+      ],
+      "required": [
+        "status"
+      ]
+    },
+    "params": [
+      "header:x-gateway-token:optional"
+    ]
+  },
+  "POST /api/v1/notifications/{attempt_id}/acknowledge": {
+    "body": {
+      "properties": [
+        "staff"
+      ],
+      "required": [
+        "staff"
+      ]
+    },
+    "params": [
+      "path:attempt_id:required"
+    ]
+  },
+  "POST /api/v1/notifications/{attempt_id}/retry": {
+    "body": null,
+    "params": [
+      "path:attempt_id:required"
+    ]
+  },
+  "POST /api/v1/patients/pin": {
+    "body": {
+      "properties": [
+        "phone",
+        "pin",
+        "staff"
+      ],
+      "required": [
+        "phone",
+        "pin",
+        "staff"
+      ]
+    },
+    "params": []
+  }
+}

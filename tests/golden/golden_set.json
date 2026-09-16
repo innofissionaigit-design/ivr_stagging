@@ -1,0 +1,837 @@
+{
+  "today": "2026-09-14",
+  "fast_path": {
+    "fp-rate-cbc": {
+      "utterance": "সিবিসি টেস্টের রেট কত",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "সিবিসি"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-rate-lipid": {
+      "utterance": "লিপিড প্রোফাইলের দাম কত",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "লিপিড প্রোফাইল"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-rate-cholesterol": {
+      "utterance": "কোলেস্টেরল টেস্ট করাতে কত টাকা লাগে",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "কোলেস্টেরল টেস্ট"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-rate-thyroid": {
+      "utterance": "থাইরয়েড টেস্টের খরচ কত",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "থাইরয়েড টেস্ট"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-rate-hepatitis-b": {
+      "utterance": "হেপাটাইটিস বি টেস্টের দাম কত",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "হেপাটাইটিস বি"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-rate-ecg": {
+      "utterance": "ইসিজি করাতে কত পড়বে",
+      "category": "routine",
+      "expected": {
+        "intent": "test_rate",
+        "slots": {
+          "test_name": "ইসিজি"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-avail-sen-today": {
+      "utterance": "ডাক্তার সেন আজ বসবেন",
+      "category": "routine",
+      "expected": {
+        "intent": "doctor_availability",
+        "slots": {
+          "doctor_name": "সেন",
+          "date": "2026-09-14"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-avail-ghosh-tomorrow": {
+      "utterance": "ডক্টর ঘোষ কাল চেম্বারে থাকবেন",
+      "category": "routine",
+      "expected": {
+        "intent": "doctor_availability",
+        "slots": {
+          "doctor_name": "ঘোষ",
+          "date": "2026-09-15"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-greeting": {
+      "utterance": "নমস্কার",
+      "category": "routine",
+      "expected": {
+        "intent": "smalltalk",
+        "slots": {},
+        "direct_reply_bn": "নমস্কার, কী সাহায্য করতে পারি?"
+      }
+    },
+    "fp-thanks": {
+      "utterance": "ধন্যবাদ",
+      "category": "routine",
+      "expected": {
+        "intent": "smalltalk",
+        "slots": {},
+        "direct_reply_bn": "ধন্যবাদ। আর কিছু জানতে চান?"
+      }
+    },
+    "fp-abstain-booking-pii": {
+      "utterance": "ডাক্তার সেনের অ্যাপয়েন্টমেন্ট বুক করতে চাই",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-two-questions": {
+      "utterance": "সিবিসির দাম আর ডাক্তার সেন কবে বসেন",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-weekday-date": {
+      "utterance": "ডাক্তার রায় সোমবার বসবেন",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-explicit-date": {
+      "utterance": "ডাক্তার সেন ১৫ তারিখে বসবেন",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-unknown-test": {
+      "utterance": "জিনোম সিকোয়েন্সিং টেস্টের রেট কত",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-unknown-doctor": {
+      "utterance": "ডাক্তার ঠাকুর কবে বসেন",
+      "category": "abstention",
+      "expected": {
+        "intent": "doctor_availability",
+        "slots": {
+          "doctor_name": "সেন"
+        },
+        "direct_reply_bn": null
+      }
+    },
+    "fp-abstain-negation": {
+      "utterance": "সিবিসি না অন্য টেস্টের দাম কত",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-empty": {
+      "utterance": "   ",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-history": {
+      "utterance": "আমার আগের টেস্টগুলো কী কী",
+      "category": "abstention",
+      "expected": null
+    },
+    "fp-abstain-payment-method": {
+      "utterance": "টাকা কীভাবে দেব",
+      "category": "abstention",
+      "expected": null
+    }
+  },
+  "replies": {
+    "rt-test-found": {
+      "fn": "test_rate_reply",
+      "args": [
+        {
+          "test_name": "সিবিসি"
+        },
+        {
+          "found": true,
+          "test_name": "Complete Blood Count (CBC)",
+          "test_name_bn": "সিবিসি",
+          "rate_inr": 400,
+          "sample_type": "Blood",
+          "report_time_hours": 6
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "সিবিসি টেস্টের রেট 400 টাকা। স্যাম্পল: Blood। রিপোর্ট 6 ঘণ্টার মধ্যে পাবেন।",
+        "hi": "সিবিসি टेस्ट का रेट 400 रुपये है। सैंपल: Blood। रिपोर्ट 6 घंटे में मिल जाएगी।",
+        "en": "The Complete Blood Count (CBC) test costs 400 rupees. Sample: Blood. The report will be ready within 6 hours."
+      }
+    },
+    "rt-test-not-found-suggest": {
+      "fn": "test_rate_reply",
+      "args": [
+        {
+          "test_name": "সিবিস"
+        },
+        {
+          "found": false,
+          "query": "সিবিস",
+          "did_you_mean": [
+            "Complete Blood Count (CBC)"
+          ]
+        }
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "'সিবিস' নামে টেস্ট খুঁজে পাইনি। আপনি কি বলতে চাইছেন: Complete Blood Count (CBC)?",
+        "hi": "'সিবিস' नाम का टेस्ट नहीं मिला। क्या आपका मतलब है: Complete Blood Count (CBC)?",
+        "en": "I could not find a test called 'সিবিস'. Did you mean: Complete Blood Count (CBC)?"
+      }
+    },
+    "rt-test-not-found": {
+      "fn": "test_rate_reply",
+      "args": [
+        {
+          "test_name": "অজানা"
+        },
+        {
+          "found": false,
+          "query": "অজানা",
+          "did_you_mean": []
+        }
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "দুঃখিত, 'অজানা' নামে কোনো টেস্ট আমাদের তালিকায় নেই।",
+        "hi": "माफ़ कीजिए, 'অজানা' नाम का कोई टेस्ट हमारी सूची में नहीं है।",
+        "en": "Sorry, there is no test called 'অজানা' in our list."
+      }
+    },
+    "rt-doctor-available": {
+      "fn": "doctor_availability_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14"
+        },
+        {
+          "found": true,
+          "doctor_name": "Dr. A. Sen",
+          "doctor_name_bn": "সেন",
+          "date": "2026-09-14",
+          "available": true,
+          "chamber_hours": "18:00-20:00",
+          "next_available_date": null
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "হ্যাঁ, 2026-09-14 তারিখে ডাঃ সেন চেম্বারে থাকবেন। সময়: 18:00-20:00। আজকের জন্যই অ্যাপয়েন্টমেন্ট করবেন, নাকি অন্য কোনো দিনের জন্য?",
+        "hi": "जी हाँ, 2026-09-14 को डॉ. সেন चेंबर में रहेंगे। समय: 18:00-20:00। आज के लिए अपॉइंटमेंट करें, या किसी और दिन के लिए?",
+        "en": "Yes, on 2026-09-14 Dr. A. Sen will be in chamber. Hours: 18:00-20:00. Shall I book for today, or for another day?"
+      }
+    },
+    "rt-doctor-next-date": {
+      "fn": "doctor_availability_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14"
+        },
+        {
+          "found": true,
+          "doctor_name": "Dr. A. Sen",
+          "doctor_name_bn": "সেন",
+          "date": "2026-09-14",
+          "available": false,
+          "chamber_hours": null,
+          "next_available_date": "2026-09-16"
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "ডাঃ সেন ওই দিন বসবেন না। পরবর্তী উপলব্ধ দিন: 2026-09-16। ওই দিনের জন্য অ্যাপয়েন্টমেন্ট করতে চান?",
+        "hi": "डॉ. সেন उस दिन नहीं बैठेंगे। अगला उपलब्ध दिन: 2026-09-16। उस दिन के लिए अपॉइंटमेंट चाहिए?",
+        "en": "Dr. A. Sen does not sit that day. Next available day: 2026-09-16. Would you like an appointment then?"
+      }
+    },
+    "rt-doctor-not-found": {
+      "fn": "doctor_availability_reply",
+      "args": [
+        {
+          "doctor_name": "নোবডি"
+        },
+        {
+          "found": false,
+          "query": "নোবডি"
+        }
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "দুঃখিত, 'নোবডি' নামে কোনো ডাক্তার আমাদের এখানে নেই।",
+        "hi": "माफ़ कीजिए, 'নোবডি' नाम के कोई डॉक्टर यहाँ नहीं हैं।",
+        "en": "Sorry, there is no doctor called 'নোবডি' here."
+      }
+    },
+    "rt-booking-success-sms": {
+      "fn": "booking_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "patient_name": "Riya Das",
+          "phone": "9000000001"
+        },
+        {
+          "success": true,
+          "confirmation_id": "KCD-20260914-0031",
+          "doctor_name": "Dr. A. Sen",
+          "doctor_name_bn": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "notification": {
+            "status": "queued"
+          }
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। ডাঃ সেন, 2026-09-14, সময় 18:15। কনফার্মেশন নম্বর: KCD-20260914-0031। কনফার্মেশনের একটা মেসেজ আপনার ফোনে পাঠানো হচ্ছে, রিসেপশনে ওটা দেখালেই হবে।",
+        "hi": "आपका अपॉइंटमेंट कन्फर्म हो गया है। डॉ. সেন, 2026-09-14, समय 18:15। कन्फर्मेशन नंबर: KCD-20260914-0031। कन्फर्मेशन का एक मैसेज आपके फ़ोन पर भेजा जा रहा है, रिसेप्शन पर वही दिखा दीजिए।",
+        "en": "Your appointment is confirmed. Dr. A. Sen, 2026-09-14, at 18:15. Confirmation number: KCD-20260914-0031. A confirmation message is being sent to your phone; just show it at reception."
+      }
+    },
+    "rt-booking-success-no-sms": {
+      "fn": "booking_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "patient_name": "Riya Das",
+          "phone": "9000000001"
+        },
+        {
+          "success": true,
+          "confirmation_id": "KCD-20260914-0032",
+          "doctor_name": "Dr. A. Sen",
+          "doctor_name_bn": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "notification": {
+            "status": "skipped"
+          }
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "আপনার অ্যাপয়েন্টমেন্ট কনফার্ম হয়েছে। ডাঃ সেন, 2026-09-14, সময় 18:15। কনফার্মেশন নম্বর: KCD-20260914-0032। নম্বরটা মনে রাখতে না পারলেও চিন্তা নেই — রিসেপশনে আপনার নাম আর ফোন নম্বর বললেই ওঁরা অ্যাপয়েন্টমেন্ট খুঁজে দেবেন।",
+        "hi": "आपका अपॉइंटमेंट कन्फर्म हो गया है। डॉ. সেন, 2026-09-14, समय 18:15। कन्फर्मेशन नंबर: KCD-20260914-0032। नंबर याद न रहे तो भी चिंता नहीं — रिसेप्शन पर अपना नाम और फ़ोन नंबर बता दीजिए, वे अपॉइंटमेंट ढूँढ देंगे।",
+        "en": "Your appointment is confirmed. Dr. A. Sen, 2026-09-14, at 18:15. Confirmation number: KCD-20260914-0032. If you cannot remember the number, do not worry — give your name and phone number at reception and they will find the appointment."
+      }
+    },
+    "rt-booking-slot-taken": {
+      "fn": "booking_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "patient_name": "Riya Das",
+          "phone": "9000000001"
+        },
+        {
+          "success": false,
+          "reason": "slot_taken",
+          "alternative_slots": [
+            "18:30",
+            "18:45"
+          ]
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "ওই সময়টা বুক হয়ে গেছে। এই সময়গুলো ফাঁকা আছে: 18:30, 18:45। কোনটা চান?",
+        "hi": "वह समय बुक हो चुका है। ये समय खाली हैं: 18:30, 18:45। कौन सा चाहिए?",
+        "en": "That time is already booked. These are free: 18:30, 18:45. Which would you like?"
+      }
+    },
+    "rt-booking-failed": {
+      "fn": "booking_reply",
+      "args": [
+        {
+          "doctor_name": "সেন",
+          "date": "2026-09-14",
+          "time_slot": "18:15",
+          "patient_name": "Riya Das",
+          "phone": "9000000001"
+        },
+        {
+          "success": false,
+          "reason": "doctor_not_found"
+        }
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "দুঃখিত, 'সেন' নামে কোনো ডাক্তার আমাদের এখানে নেই।",
+        "hi": "माफ़ कीजिए, 'সেন' नाम के कोई डॉक्टर यहाँ नहीं हैं।",
+        "en": "Sorry, there is no doctor called 'সেন' here."
+      }
+    },
+    "rt-payment-with-rate": {
+      "fn": "payment_reply",
+      "args": [
+        {
+          "test_name": "সিবিসি"
+        },
+        {
+          "found": true,
+          "test_name": "Complete Blood Count (CBC)",
+          "test_name_bn": "সিবিসি",
+          "rate_inr": 400,
+          "sample_type": "Blood",
+          "report_time_hours": 6
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "টাকা দিতে হবে শুধু কাউন্টারে, আসার দিন — নগদ বা কার্ডে। ফোনে কোনো টাকা দিতে হবে না। সিবিসি-এর জন্য 400 টাকা লাগবে। অ্যাপয়েন্টমেন্ট রাখতে আগাম টাকা লাগে না। রসিদ কাউন্টারেই ছাপিয়ে হাতে দেওয়া হবে।",
+        "hi": "पैसे सिर्फ़ काउंटर पर देने होंगे, आने के दिन — नकद या कार्ड से। फ़ोन पर कोई भुगतान नहीं करना है। সিবিসি के लिए 400 रुपये लगेंगे। अपॉइंटमेंट रखने के लिए कोई अग्रिम राशि नहीं लगती। रसीद काउंटर पर ही छापकर हाथ में दी जाएगी।",
+        "en": "Payment is made only at the counter, on the day you come — in cash or by card. You do not need to pay anything by phone. Complete Blood Count (CBC) costs 400 rupees. No advance payment is needed to hold the appointment. A printed receipt is handed to you at the counter."
+      }
+    },
+    "rt-payment-no-lookup": {
+      "fn": "payment_reply",
+      "args": [
+        {},
+        {}
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "টাকা দিতে হবে শুধু কাউন্টারে, আসার দিন — নগদ বা কার্ডে। ফোনে কোনো টাকা দিতে হবে না। অ্যাপয়েন্টমেন্ট রাখতে আগাম টাকা লাগে না। রসিদ কাউন্টারেই ছাপিয়ে হাতে দেওয়া হবে।",
+        "hi": "पैसे सिर्फ़ काउंटर पर देने होंगे, आने के दिन — नकद या कार्ड से। फ़ोन पर कोई भुगतान नहीं करना है। अपॉइंटमेंट रखने के लिए कोई अग्रिम राशि नहीं लगती। रसीद काउंटर पर ही छापकर हाथ में दी जाएगी।",
+        "en": "Payment is made only at the counter, on the day you come — in cash or by card. You do not need to pay anything by phone. No advance payment is needed to hold the appointment. A printed receipt is handed to you at the counter."
+      }
+    },
+    "rt-report-with-hours": {
+      "fn": "report_collection_reply",
+      "args": [
+        {
+          "test_name": "সিবিসি"
+        },
+        {
+          "found": true,
+          "test_name": "Complete Blood Count (CBC)",
+          "test_name_bn": "সিবিসি",
+          "rate_inr": 400,
+          "sample_type": "Blood",
+          "report_time_hours": 6
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "রিপোর্ট তৈরি হতে 6 ঘণ্টা লাগে। ছাপানো কপি কাউন্টার থেকে নিয়ে যেতে পারেন — নাম আর ফোন নম্বর বললেই হবে, রেফারেন্স নম্বর মনে না থাকলেও চলবে। আসতে না পারলে ফোন করে জেনে নিতে পারেন, আমরা পড়ে শোনাব। অন্য কেউ এসে নিতে চাইলে রোগীর নাম আর ফোন নম্বরটা জানলেই হবে।",
+        "hi": "रिपोर्ट तैयार होने में 6 घंटे लगते हैं। छपी हुई कॉपी काउंटर से ले जा सकते हैं — नाम और फ़ोन नंबर बता दीजिए, रेफरेंस नंबर याद न हो तो भी चलेगा। आ न सकें तो फ़ोन करके पूछ लीजिए, हम पढ़कर सुना देंगे। कोई और लेने आए तो मरीज़ का नाम और फ़ोन नंबर पता होना काफ़ी है।",
+        "en": "The report takes 6 hours to be ready. You can collect a printed copy from the counter — just give your name and phone number; you do not need to remember the reference number. If you cannot come in, call us and we will read it out to you. If someone else collects it, they only need the patient's name and phone number."
+      }
+    },
+    "rt-report-unknown": {
+      "fn": "report_collection_reply",
+      "args": [
+        {},
+        {}
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "রিপোর্ট কখন তৈরি হবে সেটা টেস্টের উপর নির্ভর করে। ছাপানো কপি কাউন্টার থেকে নিয়ে যেতে পারেন — নাম আর ফোন নম্বর বললেই হবে, রেফারেন্স নম্বর মনে না থাকলেও চলবে। আসতে না পারলে ফোন করে জেনে নিতে পারেন, আমরা পড়ে শোনাব। অন্য কেউ এসে নিতে চাইলে রোগীর নাম আর ফোন নম্বরটা জানলেই হবে।",
+        "hi": "रिपोर्ट कब तैयार होगी यह टेस्ट पर निर्भर करता है। छपी हुई कॉपी काउंटर से ले जा सकते हैं — नाम और फ़ोन नंबर बता दीजिए, रेफरेंस नंबर याद न हो तो भी चलेगा। आ न सकें तो फ़ोन करके पूछ लीजिए, हम पढ़कर सुना देंगे। कोई और लेने आए तो मरीज़ का नाम और फ़ोन नंबर पता होना काफ़ी है।",
+        "en": "When the report is ready depends on the test. You can collect a printed copy from the counter — just give your name and phone number; you do not need to remember the reference number. If you cannot come in, call us and we will read it out to you. If someone else collects it, they only need the patient's name and phone number."
+      }
+    },
+    "rt-counter": {
+      "fn": "counter_fallback",
+      "args": [],
+      "kwargs": {},
+      "category": "handoff",
+      "expected": {
+        "bn": "সরাসরি কাউন্টারে চলে এলেও হবে, আগে থেকে কিছু লাগবে না।",
+        "hi": "सीधे काउंटर पर आ जाइए, पहले से कुछ नहीं चाहिए।",
+        "en": "You can simply come to the counter; nothing is needed in advance."
+      }
+    },
+    "rt-counter-hours": {
+      "fn": "counter_fallback",
+      "args": [],
+      "kwargs": {
+        "hours": "9am-8pm"
+      },
+      "category": "handoff",
+      "expected": {
+        "bn": "কাউন্টার খোলা থাকে 9am-8pm। সরাসরি কাউন্টারে চলে এলেও হবে, আগে থেকে কিছু লাগবে না।",
+        "hi": "काउंटर 9am-8pm खुला रहता है। सीधे काउंटर पर आ जाइए, पहले से कुछ नहीं चाहिए।",
+        "en": "The counter is open 9am-8pm. You can simply come to the counter; nothing is needed in advance."
+      }
+    },
+    "rt-verify-pin": {
+      "fn": "verification_prompt",
+      "args": [
+        "pin"
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "আপনার হিস্ট্রি বলার আগে একটু নিশ্চিত হয়ে নিই। কাউন্টার থেকে নেওয়া আপনার চার সংখ্যার পিনটা বলবেন?",
+        "hi": "आपकी हिस्ट्री बताने से पहले पुष्टि कर लेता हूँ। काउंटर से लिया हुआ आपका चार अंकों का पिन बताएँगे?",
+        "en": "Before I read your history, let me confirm it is you. Could you say your four-digit PIN from the counter?"
+      }
+    },
+    "rt-verify-dob": {
+      "fn": "verification_prompt",
+      "args": [
+        "dob"
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "আপনার হিস্ট্রি বলার আগে একটু নিশ্চিত হয়ে নিই। আপনার জন্মতারিখটা বলবেন?",
+        "hi": "आपकी हिस्ट्री बताने से पहले पुष्टि कर लेता हूँ। आपकी जन्मतिथि बताएँगे?",
+        "en": "Before I read your history, let me confirm it is you. Could you tell me your date of birth?"
+      }
+    },
+    "rt-verify-retry": {
+      "fn": "verification_failed_reply",
+      "args": [
+        false
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "ওটা মিলল না। আরেকবার বলবেন?",
+        "hi": "वह मेल नहीं खाया। एक बार फिर बताएँगे?",
+        "en": "That did not match. Could you say it again?"
+      }
+    },
+    "rt-verify-exhausted": {
+      "fn": "verification_failed_reply",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "category": "handoff",
+      "expected": {
+        "bn": "দুঃখিত, ফোনে নিশ্চিত করতে পারলাম না। কাউন্টারে গিয়ে জিজ্ঞেস করলে ওঁরা দেখে দেবেন — সঙ্গে কিছু আনতে হবে না, শুধু নিজের নামটা বললেই হবে।",
+        "hi": "माफ़ कीजिए, फ़ोन पर पुष्टि नहीं कर सका। काउंटर पर पूछ लीजिए, वे देख देंगे — कुछ लाने की ज़रूरत नहीं, बस अपना नाम बता दीजिए।",
+        "en": "Sorry, I could not confirm that over the phone. Please ask at the counter and they will look it up — you need bring nothing, just give your name."
+      }
+    },
+    "rt-verify-locked": {
+      "fn": "verification_locked_reply",
+      "args": [],
+      "kwargs": {},
+      "category": "handoff",
+      "expected": {
+        "bn": "নিরাপত্তার জন্য এই নম্বরে আপাতত হিস্ট্রি বলা বন্ধ রাখছি। কাউন্টারে গেলে ওঁরা সঙ্গে সঙ্গে দেখে দেবেন।",
+        "hi": "सुरक्षा के लिए इस नंबर पर फ़िलहाल हिस्ट्री बताना बंद रखा है। काउंटर पर जाइए, वे तुरंत देख देंगे।",
+        "en": "For safety I have paused history on this number for now. The counter can look it up for you straight away."
+      }
+    },
+    "rt-disclosure-speakerphone": {
+      "fn": "disclosure_blocked_reply",
+      "args": [
+        "speakerphone"
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "এটা তো স্পিকারে আছে মনে হচ্ছে। ব্যক্তিগত কথা তাই বলছি না — ফোনটা কানে নিয়ে আবার বলুন, তাহলে বলে দেব।",
+        "hi": "यह स्पीकर पर लग रहा है। निजी बात इसलिए नहीं बता रहा — फ़ोन कान पर लगाकर फिर बोलिए, तब बता दूँगा।",
+        "en": "This sounds like it is on speaker. I will not read anything private aloud — hold the phone to your ear and say that again, and I will."
+      }
+    },
+    "rt-disclosure-unknown-path": {
+      "fn": "disclosure_blocked_reply",
+      "args": [
+        "path_unknown"
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "এটা তো স্পিকারে আছে মনে হচ্ছে। ব্যক্তিগত কথা তাই বলছি না — ফোনটা কানে নিয়ে আবার বলুন, তাহলে বলে দেব।",
+        "hi": "यह स्पीकर पर लग रहा है। निजी बात इसलिए नहीं बता रहा — फ़ोन कान पर लगाकर फिर बोलिए, तब बता दूँगा।",
+        "en": "This sounds like it is on speaker. I will not read anything private aloud — hold the phone to your ear and say that again, and I will."
+      }
+    },
+    "rt-disclosure-disabled": {
+      "fn": "disclosure_blocked_reply",
+      "args": [
+        "disclosure_disabled"
+      ],
+      "kwargs": {},
+      "category": "handoff",
+      "expected": {
+        "bn": "হিস্ট্রি ফোনে বলা হয় না। কাউন্টারে গেলে ওঁরা দেখে দেবেন।",
+        "hi": "हिस्ट्री फ़ोन पर नहीं बताई जाती। काउंटर पर वे देख देंगे।",
+        "en": "History is not read out over the phone. The counter can look it up for you."
+      }
+    },
+    "rt-history-two": {
+      "fn": "history_reply",
+      "args": [
+        {
+          "found": true,
+          "tests": [
+            {
+              "test_name": "Lipid Profile",
+              "test_name_bn": "লিপিড প্রোফাইল",
+              "taken_on": "2026-08-01",
+              "report_ready": true
+            },
+            {
+              "test_name": "TSH",
+              "test_name_bn": "টিএসএইচ",
+              "taken_on": "2026-09-01",
+              "report_ready": false
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "আপনার নামে 2টি টেস্টের রেকর্ড আছে। 2026-08-01 তারিখে লিপিড প্রোফাইল, রিপোর্ট তৈরি। 2026-09-01 তারিখে টিএসএইচ, রিপোর্ট এখনও তৈরি হয়নি।  রিপোর্টের বিস্তারিত ফোনে বলা হয় না, কাউন্টার থেকে ছাপানো কপি নিয়ে নেবেন।",
+        "hi": "आपके नाम पर 2 टेस्ट रिकॉर्ड हैं। 2026-08-01 को লিপিড প্রোফাইল, रिपोर्ट तैयार है। 2026-09-01 को টিএসএইচ, रिपोर्ट अभी तैयार नहीं।  रिपोर्ट का विवरण फ़ोन पर नहीं बताया जाता, काउंटर से छपी कॉपी ले लीजिए।",
+        "en": "I have 2 test records for you. Lipid Profile on 2026-08-01, report ready. TSH on 2026-09-01, report not ready yet.  Report details are not read out over the phone; collect a printed copy at the counter."
+      }
+    },
+    "rt-history-five": {
+      "fn": "history_reply",
+      "args": [
+        {
+          "found": true,
+          "tests": [
+            {
+              "test_name": "Test 1",
+              "test_name_bn": "টেস্ট 1",
+              "taken_on": "2026-01-01",
+              "report_ready": false
+            },
+            {
+              "test_name": "Test 2",
+              "test_name_bn": "টেস্ট 2",
+              "taken_on": "2026-02-01",
+              "report_ready": true
+            },
+            {
+              "test_name": "Test 3",
+              "test_name_bn": "টেস্ট 3",
+              "taken_on": "2026-03-01",
+              "report_ready": false
+            },
+            {
+              "test_name": "Test 4",
+              "test_name_bn": "টেস্ট 4",
+              "taken_on": "2026-04-01",
+              "report_ready": true
+            },
+            {
+              "test_name": "Test 5",
+              "test_name_bn": "টেস্ট 5",
+              "taken_on": "2026-05-01",
+              "report_ready": false
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "আপনার নামে 5টি টেস্টের রেকর্ড আছে। 2026-01-01 তারিখে টেস্ট 1, রিপোর্ট এখনও তৈরি হয়নি। 2026-02-01 তারিখে টেস্ট 2, রিপোর্ট তৈরি। 2026-03-01 তারিখে টেস্ট 3, রিপোর্ট এখনও তৈরি হয়নি। আরও 2টি আছে — বাকিগুলো কাউন্টারে দেখে নিতে পারেন। রিপোর্টের বিস্তারিত ফোনে বলা হয় না, কাউন্টার থেকে ছাপানো কপি নিয়ে নেবেন।",
+        "hi": "आपके नाम पर 5 टेस्ट रिकॉर्ड हैं। 2026-01-01 को টেস্ট 1, रिपोर्ट अभी तैयार नहीं। 2026-02-01 को টেস্ট 2, रिपोर्ट तैयार है। 2026-03-01 को টেস্ট 3, रिपोर्ट अभी तैयार नहीं। और 2 हैं — बाकी काउंटर पर देख लीजिए। रिपोर्ट का विवरण फ़ोन पर नहीं बताया जाता, काउंटर से छपी कॉपी ले लीजिए।",
+        "en": "I have 5 test records for you. Test 1 on 2026-01-01, report not ready yet. Test 2 on 2026-02-01, report ready. Test 3 on 2026-03-01, report not ready yet. There are 2 more — the counter can show you the rest. Report details are not read out over the phone; collect a printed copy at the counter."
+      }
+    },
+    "rt-history-none": {
+      "fn": "history_reply",
+      "args": [
+        {
+          "found": true,
+          "tests": []
+        }
+      ],
+      "kwargs": {},
+      "category": "phi",
+      "expected": {
+        "bn": "আপনার নামে এখনও কোনো টেস্টের রেকর্ড নেই।",
+        "hi": "आपके नाम पर अभी कोई टेस्ट रिकॉर्ड नहीं है।",
+        "en": "There is no test on record for you yet."
+      }
+    },
+    "rt-ask-test-name": {
+      "fn": "missing_slot_prompt",
+      "args": [
+        "test_rate",
+        "test_name"
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "কোন টেস্টের রেট জানতে চান, একটু বলবেন?",
+        "hi": "किस टेस्ट का रेट जानना चाहते हैं, बताएँगे?",
+        "en": "Which test's rate would you like to know?"
+      }
+    },
+    "rt-ask-doctor-name": {
+      "fn": "missing_slot_prompt",
+      "args": [
+        "doctor_availability",
+        "doctor_name"
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "কোন ডাক্তারের কথা জিজ্ঞেস করছেন?",
+        "hi": "आप किस डॉक्टर के बारे में पूछ रहे हैं?",
+        "en": "Which doctor are you asking about?"
+      }
+    },
+    "rt-ask-booking-date": {
+      "fn": "missing_slot_prompt",
+      "args": [
+        "book_appointment",
+        "date"
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "আজকের জন্য চান, নাকি অন্য কোনো দিনের জন্য অ্যাপয়েন্টমেন্ট চাই?",
+        "hi": "आज के लिए चाहिए, या किसी और दिन के लिए?",
+        "en": "Would you like it for today, or for another day?"
+      }
+    },
+    "rt-ask-booking-phone": {
+      "fn": "missing_slot_prompt",
+      "args": [
+        "book_appointment",
+        "phone"
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "একটা ফোন নম্বর দেবেন, যাতে কনফার্মেশন পাঠাতে পারি?",
+        "hi": "एक फ़ोन नंबर देंगे, ताकि कन्फर्मेशन भेज सकूँ?",
+        "en": "Could you give me a phone number, so I can send the confirmation?"
+      }
+    },
+    "rt-department-list": {
+      "fn": "doctors_by_department_reply",
+      "args": [
+        {
+          "department": "অর্থো",
+          "date": "2026-09-14"
+        },
+        {
+          "found": true,
+          "department": "Orthopaedics",
+          "date": "2026-09-14",
+          "doctors": [
+            {
+              "name": "Dr. D. Das",
+              "doctor_name_bn": "দাস",
+              "chamber_hours": "10:00-12:00"
+            },
+            {
+              "name": "Dr. T. Bose",
+              "doctor_name_bn": "বসু",
+              "chamber_hours": "17:30-19:30"
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "Orthopaedics বিভাগে ডাঃ দাস এবং ডাঃ বসু আছেন। অ্যাপয়েন্টমেন্টের জন্য কোন ডাক্তারের নাম বলবেন?",
+        "hi": "Orthopaedics विभाग में डॉ. দাস और डॉ. বসু हैं। अपॉइंटमेंट के लिए किस डॉक्टर का नाम बताएँगे?",
+        "en": "In Orthopaedics we have Dr. D. Das and Dr. T. Bose. Which doctor would you like the appointment with?"
+      }
+    },
+    "rt-department-none-today": {
+      "fn": "doctors_by_department_reply",
+      "args": [
+        {
+          "department": "অর্থো",
+          "date": "2026-09-14"
+        },
+        {
+          "found": true,
+          "department": "Orthopaedics",
+          "date": "2026-09-14",
+          "doctors": []
+        }
+      ],
+      "kwargs": {},
+      "category": "routine",
+      "expected": {
+        "bn": "দুঃখিত, Orthopaedics বিভাগে আজ কোনো ডাক্তার নেই। অন্য কোনো দিনের কথা জিজ্ঞেস করতে পারেন।",
+        "hi": "माफ़ कीजिए, Orthopaedics विभाग में आज कोई डॉक्टर नहीं है। किसी और दिन के बारे में पूछ सकते हैं।",
+        "en": "Sorry, there is no doctor in Orthopaedics today. You could ask about another day."
+      }
+    },
+    "rt-department-not-found": {
+      "fn": "doctors_by_department_reply",
+      "args": [
+        {
+          "department": "নেই"
+        },
+        {
+          "found": false,
+          "query": "নেই"
+        }
+      ],
+      "kwargs": {},
+      "category": "abstention",
+      "expected": {
+        "bn": "দুঃখিত, 'নেই' নামে কোনো বিভাগ আমাদের এখানে নেই।",
+        "hi": "माफ़ कीजिए, 'নেই' नाम का कोई विभाग यहाँ नहीं है।",
+        "en": "Sorry, there is no department called 'নেই' here."
+      }
+    }
+  }
+}

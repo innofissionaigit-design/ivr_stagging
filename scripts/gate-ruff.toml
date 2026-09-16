@@ -1,0 +1,18 @@
+# Ruff settings for the pre-human-review quality gate (scripts/gate.sh).
+# Author: Chakravardhan
+#
+# PROTECTED FILE. Changing it sets gate_config_touched, which withholds the
+# ready-for-human-review label until a code owner reviews the change.
+# Existing violations are recorded per file in scripts/gate-baseline.json;
+# the gate fails on any violation above that baseline.
+target-version = "py311"
+line-length = 110
+extend-exclude = [".gate-venv", ".gate", "static"]
+
+[lint]
+# E/W pycodestyle, F pyflakes (undefined names, unused imports), B bugbear,
+# BLE blind excepts, T20 stray print().
+select = ["E", "F", "W", "B", "BLE", "T20"]
+
+[format]
+quote-style = "double"

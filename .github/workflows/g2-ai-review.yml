@@ -1,0 +1,146 @@
+# G2 -- fresh-context AI engineering review. Author: Chakravardhan
+#
+# Runs only after G1 succeeds for a pull request. It checks out the gate
+# scripts from the DEFAULT branch (trusted) and the pull request separately
+# (read as data, never executed), then asks a model with no prior context to
+# review the diff against the project's rules. Critical/High findings withhold
+# the ready-for-human-review label. G2 is NOT production approval.
+#
+# Requires the repository secret ANTHROPIC_API_KEY. Without it the review
+# fails closed and the label is withheld.
+#
+# PROTECTED FILE: editing it sets gate_config_touched.
+name: G2 AI Review
+
+on:
+  workflow_run:
+    workflows: ["G1 Gate"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: g2-${{ github.event.workflow_run.head_sha || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: G2 fresh-context AI review
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the trusted gate scripts (default branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Resolve the pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_INPUT: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_INPUT:-}" ]; then
+            pr="$PR_INPUT"
+          else
+            pr="$(gh api "repos/$REPO/commits/$RUN_HEAD_SHA/pulls" --jq '.[0].number // empty')"
+          fi
+          if [ -z "$pr" ]; then echo "No pull request found; nothing to review."; exit 1; fi
+          gh api "repos/$REPO/pulls/$pr" > "$RUNNER_TEMP/pr.json"
+          {
+            echo "number=$pr"
+            echo "head_sha=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")"
+            echo "base_sha=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")"
+            echo "head_repo=$(jq -r .head.repo.full_name "$RUNNER_TEMP/pr.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pull request (read as data, never executed)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the base commit
+        env:
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        run: git -C pr fetch --no-tags "https://github.com/$REPO" "$BASE_SHA"
+
+      - name: Download the G1 report for this head
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gate-report
+          path: g1
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install the review client (pinned)
+        run: python -m pip install -r trusted/scripts/gate-requirements-ai.txt
+
+      - name: Fresh-context review
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: >-
+          python trusted/scripts/gate-ai-review.py --repo pr --base "$BASE_SHA" --head "$HEAD_SHA"
+          --g1-report g1/gate-report.md --rules trusted/CLAUDE.md --out ai-review.json
+
+      - name: Record the review result on the pull request head
+        if: always() && steps.pr.outputs.head_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          OUTCOME: ${{ steps.review.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$OUTCOME" = success ]; then state=success; desc="No unresolved Critical/High findings"
+          else state=failure; desc="Review failed, incomplete, or Critical/High findings"; fi
+          gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" -f state="$state" -f context="G2 AI review" \
+            -f description="$desc" -f target_url="$RUN_URL"
+
+      - name: Publish the review to the job summary
+        if: always()
+        run: |
+          if [ -f ai-review.json ]; then
+            { echo '## G2 AI review (fresh context; not production approval)'; echo '```json';
+              cat ai-review.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the review
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ai-review
+          path: ai-review.json
+          if-no-files-found: warn
+          retention-days: 30

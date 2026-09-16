@@ -16,10 +16,10 @@ probe() {  # probe <name> <url>
 
 echo "== services =="
 probe ollama      "http://localhost:11434/api/tags"
-probe tts         "http://localhost:8002/health"
-probe clinic-api  "http://localhost:8080/api/health"
-probe voice-agent "http://localhost:8100/api/health"
-probe voice-pcm   "http://localhost:8101/api/health"
+probe tts         "http://localhost:${TTS_PORT:-8002}/health"
+probe clinic-api  "http://localhost:${CLINIC_API_PORT:-8080}/api/health"
+probe voice-agent "http://localhost:${VOICE_AGENT_PORT:-8100}/api/health"
+probe voice-pcm   "http://localhost:${VOICE_AGENT_PCM_PORT:-8101}/api/health"
 
 echo
 echo "== resident models =="

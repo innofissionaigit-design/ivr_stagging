@@ -16,6 +16,13 @@
     #warning { display: none; max-width: 600px; margin: 20px auto; background: #fff3cd; color: #664d03;
                padding: 12px; border-radius: 8px; font-size: 14px; }
     #note { max-width: 600px; margin: 14px auto 0; font-size: 12px; color: #6b7280; line-height: 1.5; }
+    #keypad { display: flex; flex-direction: column; gap: 8px; max-width: 340px; margin: 18px auto 0;
+              background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 14px; }
+    #keypad[hidden] { display: none; }
+    #keypadHint { font-size: 13px; color: #9a3412; margin-bottom: 2px; }
+    #keypad button { font-size: 16px; padding: 12px; border-radius: 8px; border: 1px solid #fdba74;
+                     background: white; cursor: pointer; text-align: left; }
+    #keypad button:hover { background: #fff1e2; }
   </style>
 </head>
 <body>
@@ -36,10 +43,21 @@
        WHY, so this shows the two things that distinguish the causes: whether
        the track is muted by the app, and the actual input level. -->
   <div id="diag" style="font-family:monospace;font-size:13px;padding:6px 0;color:#444"></div>
+
+  <!-- Shown only when the server says so (a "_keypad" control frame, sent
+       after two consecutive turns it could not make out). Hidden again the
+       moment a spoken turn gets through, so it never becomes permanent
+       furniture on the page. -->
+  <div id="keypad" hidden>
+    <div id="keypadHint">শোনা যাচ্ছে না — নিচ থেকে বেছে নিন:</div>
+    <button data-digit="1">১ — পরীক্ষার রেট</button>
+    <button data-digit="2">২ — ডাক্তারের সময়</button>
+    <button data-digit="3">৩ — অ্যাপয়েন্টমেন্ট</button>
+  </div>
+
   <div id="log"></div>
   <p id="note">
-    এই লাইনটি হাফ-ডুপ্লেক্স: AI যখন বলছে তখন আপনার মাইক বন্ধ থাকে, তাই মাঝপথে থামানো যাবে না।
-    AI-এর কথা শেষ হলে বলুন।
+    AI বলার সময়েও আপনি বলতে পারেন — বললে AI থেমে যাবে। স্পিকারে থাকলেও কাজ করবে।
   </p>
 
   <script>
@@ -47,6 +65,52 @@
     const statusEl = document.getElementById('status');
     const log = document.getElementById('log');
     const warningEl = document.getElementById('warning');
+    const keypadEl = document.getElementById('keypad');
+
+
+    // ---- speakerphone support -------------------------------------------
+    // The mic used to be muted for the whole of every reply, which made
+    // barge-in impossible. It now stays live; the server tells its own echo
+    // apart from the caller using the audio it just sent as a reference
+    // (agent/echo_guard.py), and sends "_stop_audio" when the caller really
+    // is talking over the agent.
+    let currentSource = null;
+    let bargedIn = false;
+
+    function stopPlayback() {
+      bargedIn = true;
+      pendingClips = 0;
+      try { currentSource && currentSource.stop(); } catch (e) { /* already ended */ }
+      currentSource = null;
+      statusEl.classList.remove('speaking');
+      statusEl.textContent = 'শুনছি...';
+    }
+
+    // Best-effort hint about how the caller is holding the phone. The server
+    // treats it as a starting point only and lets its own Echo Return Loss
+    // measurement override it -- track labels are inconsistent across
+    // browsers and absent on most desktops.
+    function detectAudioMode() {
+      try {
+        const track = stream && stream.getAudioTracks()[0];
+        const label = (track && track.label || '').toLowerCase();
+        if (/speaker|speakerphone|loud/.test(label)) return 'speakerphone';
+        if (/headset|earpiece|handset|headphone/.test(label)) return 'handset';
+      } catch (e) { /* label is privileged on some browsers */ }
+      return null;
+    }
+
+    function showKeypad() { keypadEl.hidden = false; }
+    function hideKeypad() { keypadEl.hidden = true; }
+
+    // One listener on the container rather than three on the buttons: the
+    // menu is server-defined and will grow.
+    keypadEl.addEventListener('click', (e) => {
+      const key = e.target.closest('button[data-digit]');
+      if (!key || !inCall || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: 'dtmf', digit: key.dataset.digit }));
+      hideKeypad();
+    });
 
     const MIME_TYPE = 'audio/webm';
 
@@ -167,9 +231,9 @@
 
     function playAudio(arrayBuffer) {
       pendingClips += 1;
-      setMicMuted(true);
+      bargedIn = false;
       statusEl.classList.add('speaking');
-      statusEl.textContent = 'AI বলছে... (মাইক বন্ধ)';
+      statusEl.textContent = 'AI বলছে... (থামাতে বলুন)';
 
       playQueue = playQueue.then(() => new Promise(async (resolve) => {
         // Watchdog. Muting the mic is done EAGERLY at the top of playAudio,
@@ -190,7 +254,9 @@
           if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
           if (audioContext.state === 'suspended') await audioContext.resume();
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          if (bargedIn) { resolve(); return; }   // interrupted before this clip began
           const source = audioContext.createBufferSource();
+          currentSource = source;
           source.buffer = audioBuffer;
           source.connect(audioContext.destination);
           source.onended = () => { clearTimeout(watchdog); finish(); };
@@ -201,7 +267,12 @@
           finish();
         }
       })).then(() => {
-        pendingClips -= 1;
+        // Clamped: stopPlayback() zeroes this while a clip's promise is
+        // still in flight, and an unclamped decrement would leave the
+        // counter permanently negative -- so the `=== 0` test below would
+        // never match again and playback_done would never be sent for the
+        // rest of the call.
+        pendingClips = Math.max(0, pendingClips - 1);
         // Only the LAST clip in a burst reopens the mic -- otherwise the
         // gap between two queued replies would unmute mid-sentence.
         if (pendingClips === 0) setTimeout(onPlaybackIdle, POST_PLAYBACK_GUARD_MS);
@@ -229,7 +300,18 @@
       try {
         const chosen = document.getElementById('micSel').value;
         const audioConstraints = {
+          // First stage of noise suppression, in the browser's own WebRTC
+          // pipeline. A second, measurable stage runs server-side per clip
+          // (agent/audio_quality.py) -- this one cannot be inspected or
+          // tuned from here, and differs between browsers.
           channelCount: 1, echoCancellation: true, noiseSuppression: true,
+          // ADDED BY CHAKRAVARDHAN -- autoGainControl explicitly OFF. AGC
+          // rides the gain continuously, which lifts the noise floor during
+          // the pauses between words -- the exact signal the turn detector
+          // uses to decide the caller has finished. Levelling is done
+          // instead as ONE constant gain per already-segmented clip on the
+          // server, where it cannot move a turn boundary.
+          autoGainControl: false,
         };
         // exact: refuse to silently fall back to the browser default, which is
         // how a loopback device gets selected without anyone noticing.
@@ -259,6 +341,9 @@
           }
         };
         mediaRecorder.start(250);
+        const mode = detectAudioMode();
+        if (mode) ws.send(JSON.stringify({ type: 'audio_mode', mode }));
+
         inCall = true;
         pendingClips = 0;
         btn.textContent = 'কল শেষ করুন (End Call)';
@@ -270,6 +355,11 @@
         if (typeof event.data === 'string') {
           const data = JSON.parse(event.data);
           if (data.sender === '_ping') return; // keepalive, not a real exchange
+          if (data.sender === '_stop_audio') { stopPlayback(); return; }
+          if (data.sender === '_keypad') { showKeypad(); return; }
+          // A transcript came back, so speech is getting through again --
+          // the keypad has served its purpose and should get out of the way.
+          if (data.sender === 'User') hideKeypad();
           appendLog(data.sender, data.text);
         } else {
           playAudio(event.data);
@@ -284,6 +374,7 @@
       inCall = false;
       pendingClips = 0;
       setMicMuted(false);
+      hideKeypad();
       if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
       if (stream) stream.getTracks().forEach((t) => t.stop());
       if (ws && ws.readyState === WebSocket.OPEN) ws.close();

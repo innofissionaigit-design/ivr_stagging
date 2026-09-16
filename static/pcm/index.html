@@ -19,6 +19,13 @@
     .badge { display: inline-block; background: #0f766e; color: white; font-size: 11px; padding: 3px 9px;
              border-radius: 999px; letter-spacing: .04em; vertical-align: middle; }
     #diag { max-width: 620px; margin: 10px auto 0; font-size: 11px; color: #94a3b8; font-family: ui-monospace, monospace; }
+    #keypad { display: flex; flex-direction: column; gap: 8px; max-width: 340px; margin: 18px auto 0;
+              background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 14px; }
+    #keypad[hidden] { display: none; }
+    #keypadHint { font-size: 13px; color: #9a3412; margin-bottom: 2px; }
+    #keypad button { font-size: 16px; padding: 12px; border-radius: 8px; border: 1px solid #fdba74;
+                     background: white; cursor: pointer; text-align: left; }
+    #keypad button:hover { background: #fff1e2; }
   </style>
 </head>
 <body>
@@ -31,10 +38,21 @@
   </div>
   <div id="status">সিস্টেম প্রস্তুত...</div>
   <div id="diag"></div>
+
+  <!-- Shown only when the server says so (a "_keypad" control frame, sent
+       after two consecutive turns it could not make out). Hidden again the
+       moment a spoken turn gets through, so it never becomes permanent
+       furniture on the page. -->
+  <div id="keypad" hidden>
+    <div id="keypadHint">শোনা যাচ্ছে না — নিচ থেকে বেছে নিন:</div>
+    <button data-digit="1">১ — পরীক্ষার রেট</button>
+    <button data-digit="2">২ — ডাক্তারের সময়</button>
+    <button data-digit="3">৩ — অ্যাপয়েন্টমেন্ট</button>
+  </div>
+
   <div id="log"></div>
   <p id="note">
-    এই লাইনটি হাফ-ডুপ্লেক্স: AI যখন বলছে তখন আপনার মাইক বন্ধ থাকে, তাই মাঝপথে থামানো যাবে না।
-    AI-এর কথা শেষ হলে বলুন।
+    AI বলার সময়েও আপনি বলতে পারেন — বললে AI থেমে যাবে। স্পিকারে থাকলেও কাজ করবে।
   </p>
 
   <script>
@@ -43,6 +61,52 @@
     const diagEl = document.getElementById('diag');
     const log = document.getElementById('log');
     const warningEl = document.getElementById('warning');
+    const keypadEl = document.getElementById('keypad');
+
+
+    // ---- speakerphone support -------------------------------------------
+    // The mic used to be muted for the whole of every reply, which made
+    // barge-in impossible. It now stays live; the server tells its own echo
+    // apart from the caller using the audio it just sent as a reference
+    // (agent/echo_guard.py), and sends "_stop_audio" when the caller really
+    // is talking over the agent.
+    let currentSource = null;
+    let bargedIn = false;
+
+    function stopPlayback() {
+      bargedIn = true;
+      pendingClips = 0;
+      try { currentSource && currentSource.stop(); } catch (e) { /* already ended */ }
+      currentSource = null;
+      statusEl.classList.remove('speaking');
+      statusEl.textContent = 'শুনছি...';
+    }
+
+    // Best-effort hint about how the caller is holding the phone. The server
+    // treats it as a starting point only and lets its own Echo Return Loss
+    // measurement override it -- getSettings() is inconsistent across
+    // browsers and says nothing at all on most desktops.
+    function detectAudioMode() {
+      try {
+        const track = stream && stream.getAudioTracks()[0];
+        const label = (track && track.label || '').toLowerCase();
+        if (/speaker|speakerphone|loud/.test(label)) return 'speakerphone';
+        if (/headset|earpiece|handset|headphone/.test(label)) return 'handset';
+      } catch (e) { /* label is privileged on some browsers */ }
+      return null;
+    }
+
+    function showKeypad() { keypadEl.hidden = false; }
+    function hideKeypad() { keypadEl.hidden = true; }
+
+    // One listener on the container rather than three on the buttons: the
+    // menu is server-defined and will grow.
+    keypadEl.addEventListener('click', (e) => {
+      const key = e.target.closest('button[data-digit]');
+      if (!key || !inCall || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({ type: 'dtmf', digit: key.dataset.digit }));
+      hideKeypad();
+    });
 
     const TARGET_RATE = 16000;   // what Silero VAD and IndicConformer both want
     const POST_PLAYBACK_GUARD_MS = 250;
@@ -89,9 +153,9 @@
 
     function playAudio(arrayBuffer) {
       pendingClips += 1;
-      setMicMuted(true);
+      bargedIn = false;
       statusEl.classList.add('speaking');
-      statusEl.textContent = 'AI বলছে... (মাইক বন্ধ)';
+      statusEl.textContent = 'AI বলছে... (থামাতে বলুন)';
 
       playQueue = playQueue.then(() => new Promise(async (resolve) => {
         // Watchdog. The mic is muted EAGERLY above but only unmuted once this
@@ -114,7 +178,9 @@
           if (!playbackCtx) playbackCtx = new (window.AudioContext || window.webkitAudioContext)();
           if (playbackCtx.state === 'suspended') await playbackCtx.resume();
           const audioBuffer = await playbackCtx.decodeAudioData(arrayBuffer);
+          if (bargedIn) { resolve(); return; }   // interrupted before this clip began
           const source = playbackCtx.createBufferSource();
+          currentSource = source;
           source.buffer = audioBuffer;
           source.connect(playbackCtx.destination);
           source.onended = () => { clearTimeout(watchdog); finish(); };
@@ -125,7 +191,12 @@
           finish();
         }
       })).then(() => {
-        pendingClips -= 1;
+        // Clamped: stopPlayback() zeroes this while a clip's promise is
+        // still in flight, and an unclamped decrement would leave the
+        // counter permanently negative -- so the `=== 0` test below would
+        // never match again and playback_done would never be sent for the
+        // rest of the call.
+        pendingClips = Math.max(0, pendingClips - 1);
         if (pendingClips === 0) setTimeout(onPlaybackIdle, POST_PLAYBACK_GUARD_MS);
       });
     }
@@ -141,6 +212,14 @@
       const sel = document.getElementById('micSel');
       if (!sel) return;
       try {
+        // NOTE (merge dev_chakravardhan -> staging_merged): dev_chakravardhan's
+        // side of this conflict was a getUserMedia({...audioConstraints})
+        // call that belongs in startCall() below, not here -- it never
+        // defines `mics`, which the unconflicted tail of this function
+        // (firstReal/preselect matching just below) depends on. That change
+        // (autoGainControl: false) has been applied to startCall()'s own
+        // audioConstraints instead, and this function keeps HEAD's real,
+        // load-bearing loopback-sorting implementation intact.
         const mics = (await navigator.mediaDevices.enumerateDevices())
           .filter((d) => d.kind === 'audioinput');
         mics.sort((a, b) => (isLoopback(a.label) ? 1 : 0) - (isLoopback(b.label) ? 1 : 0));
@@ -173,7 +252,18 @@
       try {
         const chosen = document.getElementById('micSel')?.value;
         const audioConstraints = {
+          // First stage of noise suppression, in the browser's own WebRTC
+          // pipeline. A second, measurable stage runs server-side per clip
+          // (agent/audio_quality.py) -- this one cannot be inspected or
+          // tuned from here, and differs between browsers.
           channelCount: 1, echoCancellation: true, noiseSuppression: true,
+          // ADDED BY CHAKRAVARDHAN -- autoGainControl explicitly OFF. AGC
+          // rides the gain continuously, which lifts the noise floor during
+          // the pauses between words -- the exact signal the turn detector
+          // uses to decide the caller has finished. Levelling is done
+          // instead as ONE constant gain per already-segmented clip on the
+          // server, where it cannot move a turn boundary.
+          autoGainControl: false,
         };
         // exact: never silently fall back to the browser default, which is how
         // a loopback device gets picked without anyone noticing.
@@ -230,6 +320,9 @@
         workletNode.connect(sinkNode);
         sinkNode.connect(captureCtx.destination);
 
+        const mode = detectAudioMode();
+        if (mode) ws.send(JSON.stringify({ type: 'audio_mode', mode }));
+
         inCall = true;
         pendingClips = 0;
         bytesSent = 0;
@@ -243,6 +336,11 @@
         if (typeof event.data === 'string') {
           const data = JSON.parse(event.data);
           if (data.sender === '_ping') return;
+          if (data.sender === '_stop_audio') { stopPlayback(); return; }
+          if (data.sender === '_keypad') { showKeypad(); return; }
+          // A transcript came back, so speech is getting through again --
+          // the keypad has served its purpose and should get out of the way.
+          if (data.sender === 'User') hideKeypad();
           appendLog(data.sender, data.text);
         } else {
           playAudio(event.data);
@@ -257,6 +355,7 @@
       inCall = false;
       pendingClips = 0;
       setMicMuted(false);
+      hideKeypad();
       try { sourceNode && sourceNode.disconnect(); } catch (e) { /* already torn down */ }
       try { workletNode && workletNode.disconnect(); } catch (e) { /* already torn down */ }
       try { sinkNode && sinkNode.disconnect(); } catch (e) { /* already torn down */ }

@@ -30,6 +30,7 @@ Every one of these is tunable per-request (see SynthesizeRequest) so the
 settings can be A/B'd against a real handset without a redeploy.
 """
 import io
+import logging
 import os
 import re
 import threading
@@ -50,16 +51,79 @@ from TTS.utils.synthesizer import Synthesizer
 
 app = FastAPI()
 
-CKPT = "/workspace/tts_checkpoints/bn"
+# MULTILINGUAL CHECKPOINTS
+# ------------------------
+# The Bengali checkpoint keeps the path it has always had, and keeps being
+# loaded eagerly at import, so this server starts and behaves exactly as it
+# did. Hindi and English are looked for under a sibling directory and are
+# loaded ONLY IF PRESENT, lazily, on the first request that asks for them.
+#
+# Lazy on purpose: each FastPitch+HiFiGAN pair is VRAM on a card already
+# shared with IndicConformer and Ollama (see deploy/env.sh on why
+# OLLAMA_KEEP_ALIVE matters here). Loading three voices at boot to serve a
+# line that may only ever hear Bengali is the wrong trade; loading one the
+# first time a caller actually speaks Hindi is the right one.
+CKPT_ROOT = os.environ.get("TTS_CKPT_ROOT", "/workspace/tts_checkpoints")
+CKPT = os.environ.get("TTS_CKPT_BN", f"{CKPT_ROOT}/bn")
 
-synthesizer = Synthesizer(
-    tts_checkpoint=f"{CKPT}/fastpitch/best_model.pth",
-    tts_config_path=f"{CKPT}/fastpitch/config.json",
-    tts_speakers_file=f"{CKPT}/fastpitch/speakers.pth",
-    vocoder_checkpoint=f"{CKPT}/hifigan/best_model.pth",
-    vocoder_config=f"{CKPT}/hifigan/config.json",
-    use_cuda=True,
-)
+_CKPT_ENV = {"bn": "TTS_CKPT_BN", "hi": "TTS_CKPT_HI", "en": "TTS_CKPT_EN"}
+
+
+def _checkpoint_dir(lang: str) -> str | None:
+    """-> the checkpoint directory for `lang`, or None if this pod has none.
+
+    None is a first-class answer, not an error. A pod with only the Bengali
+    voice must say so rather than silently synthesizing Hindi text with a
+    Bengali phonemizer, which produces confident nonsense -- the worst
+    failure mode available here, because it sounds like it worked.
+    """
+    explicit = os.environ.get(_CKPT_ENV.get(lang, ""), "").strip()
+    if explicit:
+        return explicit if os.path.isdir(explicit) else None
+    guess = os.path.join(CKPT_ROOT, lang)
+    return guess if os.path.isdir(guess) else None
+
+
+def _build(ckpt_dir: str) -> Synthesizer:
+    return Synthesizer(
+        tts_checkpoint=f"{ckpt_dir}/fastpitch/best_model.pth",
+        tts_config_path=f"{ckpt_dir}/fastpitch/config.json",
+        tts_speakers_file=f"{ckpt_dir}/fastpitch/speakers.pth",
+        vocoder_checkpoint=f"{ckpt_dir}/hifigan/best_model.pth",
+        vocoder_config=f"{ckpt_dir}/hifigan/config.json",
+        use_cuda=True,
+    )
+
+
+synthesizer = _build(CKPT)
+
+# lang -> Synthesizer. Bengali is present from boot; the others appear here
+# the first time they are asked for and found.
+_SYNTHS: dict[str, Synthesizer] = {"bn": synthesizer}
+_SYNTH_LOAD_LOCK = threading.Lock()
+
+
+def _synth_for(lang: str) -> tuple[Synthesizer, str]:
+    """-> (synthesizer, the language it ACTUALLY speaks).
+
+    The second element is the honest part. When a Hindi request arrives on
+    a pod with no Hindi voice, this returns the Bengali synthesizer AND
+    says "bn", and /synthesize reports that back in a response header so
+    the agent knows the caller did not hear what was asked for. Silently
+    substituting a voice and reporting success is how a system ends up
+    believing it is multilingual when it is not.
+    """
+    lang = (lang or "bn").strip().lower()
+    if lang in _SYNTHS:
+        return _SYNTHS[lang], lang
+    ckpt = _checkpoint_dir(lang)
+    if ckpt is None:
+        return synthesizer, "bn"
+    with _SYNTH_LOAD_LOCK:
+        if lang not in _SYNTHS:            # re-checked under the lock
+            logging.getLogger("tts").info("loading %s voice from %s", lang, ckpt)
+            _SYNTHS[lang] = _build(ckpt)
+    return _SYNTHS[lang], lang
 
 # One GPU model instance, shared by every request. FastAPI runs a sync
 # `def` endpoint (see /synthesize below) in a thread-pool, so overlapping
@@ -154,7 +218,8 @@ def _normalize_peak(wav: np.ndarray) -> np.ndarray:
     return wav * (TARGET_PEAK / peak) if peak > 1e-6 else wav
 
 
-def _render(text: str, speaker: str, speed: float, pauses: bool) -> np.ndarray:
+def _render(text: str, speaker: str, speed: float, pauses: bool,
+            synth: Synthesizer | None = None) -> np.ndarray:
     if hasattr(synthesizer.tts_model, "length_scale"):
         synthesizer.tts_model.length_scale = speed
 
@@ -169,7 +234,7 @@ def _render(text: str, speaker: str, speed: float, pauses: bool) -> np.ndarray:
         # predates that kwarg entirely and its Synthesizer.tts() doesn't
         # accept it. It also never re-splits internally, so simply not
         # passing it is equivalent, not a behavior change.
-        raw = synthesizer.tts(chunk_text, speaker_name=speaker)
+        raw = (synth or synthesizer).tts(chunk_text, speaker_name=speaker)
         wav = _trim_silence(np.asarray(raw, dtype=np.float32))
         if wav.size == 0:
             # STORY [Answer Quality and Grounding]
@@ -218,11 +283,24 @@ class SynthesizeRequest(BaseModel):
     pauses: bool = True
 
 
+def _speaker_for(lang: str) -> str:
+    """Each checkpoint ships its own speaker names; the Bengali default is
+    meaningless to a Hindi model and picking it would raise inside TTS."""
+    return os.environ.get({"bn": "TTS_SPEAKER", "hi": "TTS_SPEAKER_HI",
+                           "en": "TTS_SPEAKER_EN"}.get(lang, "TTS_SPEAKER"),
+                          DEFAULT_SPEAKER if lang == "bn" else "") or DEFAULT_SPEAKER
+
+
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "speaker": DEFAULT_SPEAKER,
+        # Which voices this pod can actually produce. "loaded" are in VRAM
+        # now; "available" also counts checkpoints on disk not yet loaded.
+        "languages_loaded": sorted(_SYNTHS),
+        "languages_available": sorted(
+            {"bn"} | {c for c in ("hi", "en") if _checkpoint_dir(c)}),
         "sample_rate": SAMPLE_RATE,
         "length_scale": DEFAULT_LENGTH_SCALE,
     }
@@ -230,16 +308,27 @@ def health():
 
 @app.post("/synthesize")
 def synthesize(req: SynthesizeRequest):
+    # `lang` used to be accepted and ignored -- every request got the
+    # Bengali voice regardless. It is now honoured where a voice exists.
+    synth, spoken_lang = _synth_for(req.lang)
+
     # See _synth_lock's comment above -- this is a real GPU model shared
     # across every request FastAPI's thread-pool might run concurrently.
     with _synth_lock:
         wav = _render(
             req.text,
-            req.speaker or DEFAULT_SPEAKER,
+            req.speaker or _speaker_for(spoken_lang),
             req.speed or DEFAULT_LENGTH_SCALE,
             req.pauses,
+            synth,
         )
     buf = io.BytesIO()
     sf.write(buf, wav, SAMPLE_RATE, format="WAV", subtype="PCM_16")
     buf.seek(0)
-    return Response(content=buf.read(), media_type="audio/wav")
+    return Response(
+        content=buf.read(), media_type="audio/wav",
+        # The caller asked for req.lang; this says what they GOT. Differing
+        # values mean this pod has no voice for the requested language and
+        # substituted the default -- see _synth_for().
+        headers={"X-TTS-Lang": spoken_lang, "X-TTS-Lang-Requested": (req.lang or "bn")},
+    )

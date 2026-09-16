@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import threading
 
 import torch
 
@@ -36,6 +37,22 @@ _LOCAL_SILERO_REPO = os.environ.get("SILERO_VAD_REPO", "/workspace/silero-vad")
 class TurnResult:
     utterance_end_s: float | None   # relative to the slice passed in; None => still talking
     had_any_speech: bool
+
+    # Where the caller's FIRST syllable is, also relative to the slice.
+    # Only meaningful when utterance_end_s is not None.
+    #
+    # This exists so the caller of poll() can cut the ASR clip at the start
+    # of speech instead of at the start of the slice. Everything before
+    # this offset is whatever the room was doing while the caller worked
+    # out what to say -- silence in a quiet room, but traffic, a fan or a
+    # crowd in a noisy one, and it grows with every second the caller
+    # hesitates. Feeding it to ASR is what makes a noisy caller's short
+    # question arrive as a long, mostly-noise clip.
+    #
+    # Defaults to 0.0, which is exactly the previous behaviour (cut from
+    # the start of the slice), so the "still talking" returns below can
+    # keep omitting it.
+    utterance_start_s: float = 0.0
 
 
 class TurnDetector:
@@ -72,6 +89,9 @@ class TurnDetector:
 
         self.max_utterance_s = max_utterance_s
 
+        # Serializes model inference in poll(). See poll()'s docstring.
+        self._model_lock = threading.Lock()
+
         if os.path.isdir(_LOCAL_SILERO_REPO):
             self.model, utils = torch.hub.load(
                 repo_or_dir=_LOCAL_SILERO_REPO, source="local", model="silero_vad",
@@ -87,7 +107,48 @@ class TurnDetector:
     def poll(self, wav_tensor: torch.Tensor, sr: int) -> TurnResult:
         """wav_tensor: the UNPROCESSED TAIL of the call's buffer only --
         i.e. audio already consumed by a prior completed turn must not be
-        included. Index 0 is treated as "now"."""
+        included. Index 0 is treated as "now".
+
+        When a turn IS complete, the result carries both ends of it --
+        utterance_start_s as well as utterance_end_s -- so the clip handed
+        to ASR can exclude the room noise that preceded the caller
+        speaking. See TurnResult.utterance_start_s.
+
+        THREAD SAFETY
+        -------------
+        There is ONE TurnDetector per process (see the class docstring) and
+        main.py dispatches poll() through asyncio.to_thread from EVERY call's
+        poll loop, every POLL_INTERVAL_S. So at N concurrent callers this
+        runs ~2N times a second from arbitrary worker threads against a
+        single shared model.
+
+        That is not safe unsynchronized. Silero's model is stateful: it
+        carries hidden state across the chunks of one pass, and
+        get_speech_timestamps() resets that state at the start of each call
+        and then feeds chunks through it in sequence. Two threads inside it
+        at once means one call's reset lands in the middle of the other's
+        chunk sequence, and both then read hidden state built from the other
+        caller's audio.
+
+        Nothing raises -- the failure is silent and produces WRONG SPEECH
+        BOUNDARIES: an utterance_end_s that does not correspond to where the
+        caller actually stopped. main.py trusts that number to slice the
+        clip for ASR and to advance processed_until_s, so a corrupted
+        boundary either truncates the caller mid-sentence or advances the
+        marker past audio nobody has transcribed. Both present as "it cut me
+        off" / "it missed what I said" at peak, and neither leaves a trace.
+
+        The lock covers only the inference call. Resampling and the arithmetic
+        below touch no shared state and stay outside it.
+
+        SCALING NOTE: this serializes a ~10-50ms operation across all calls,
+        which is comfortable to roughly 20 concurrent callers and becomes a
+        ceiling beyond that. The way past it is per-thread model instances
+        (threading.local + lazy torch.hub.load), which trades ~2MB per pool
+        thread for real parallelism. Not done here because torch.hub.load is
+        itself of uncertain thread safety and the other bottlenecks in the
+        pipeline bite well before this one does.
+        """
         if sr != 16000:
             wav_tensor = torch.nn.functional.interpolate(
                 wav_tensor.view(1, 1, -1), scale_factor=16000 / sr, mode="linear",
@@ -99,9 +160,10 @@ class TurnDetector:
         if duration_s < 0.2:
             return TurnResult(utterance_end_s=None, had_any_speech=False)
 
-        spans = self._get_speech_timestamps(
-            wav_tensor, self.model, sampling_rate=sr, return_seconds=True,
-        )
+        with self._model_lock:
+            spans = self._get_speech_timestamps(
+                wav_tensor, self.model, sampling_rate=sr, return_seconds=True,
+            )
         if not spans:
             return TurnResult(utterance_end_s=None, had_any_speech=False)
 
@@ -113,7 +175,8 @@ class TurnDetector:
         # max_segment_s, which exists because IndicConformer's RNNT decoder
         # silently drops content on long unsegmented audio).
         if duration_s >= self.max_utterance_s:
-            return TurnResult(utterance_end_s=last_speech_end, had_any_speech=True)
+            return TurnResult(utterance_end_s=last_speech_end, had_any_speech=True,
+                              utterance_start_s=first_speech_start)
 
         if (last_speech_end - first_speech_start) < self.min_speech_s:
             return TurnResult(utterance_end_s=None, had_any_speech=True)
@@ -125,6 +188,7 @@ class TurnDetector:
         trailing_silence = confirmed_duration_s - last_speech_end
 
         if trailing_silence >= self.silence_confirm_s:
-            return TurnResult(utterance_end_s=last_speech_end, had_any_speech=True)
+            return TurnResult(utterance_end_s=last_speech_end, had_any_speech=True,
+                              utterance_start_s=first_speech_start)
 
         return TurnResult(utterance_end_s=None, had_any_speech=True)

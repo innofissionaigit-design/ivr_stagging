@@ -1,0 +1,10 @@
+# Static-analysis tools for the quality gate, pinned. Author: Chakravardhan
+# Local: installed into .gate-venv/ (gitignored). CI: installed into the runner.
+# PROTECTED FILE: a tool upgrade changes what the gate reports and must be
+# reviewed like any other gate change.
+ruff==0.16.7
+mypy==1.18.2
+bandit==1.9.4
+vulture==2.16
+pip-audit==2.10.1
+PyYAML==6.0.3

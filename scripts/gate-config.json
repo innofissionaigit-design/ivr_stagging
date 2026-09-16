@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "_comment": "Pre-human-review quality gate configuration. Author: Chakravardhan. PROTECTED: any change sets gate_config_touched and withholds the ready-for-human-review label until a code owner reviews it. Removing a check, making one optional, dropping a mode, lowering a suite's min_tests or removing a protected path is detected by scripts/gate_protect.py as weakening the gate.",
+  "max_remediation_cycles": 3,
+  "python_source": ["agent", "clinic-api", "main.py", "main_pcm.py", "tts_server.py", "tools", "scripts"],
+  "typecheck": {
+    "root_targets": ["agent", "main.py", "main_pcm.py", "tts_server.py", "tools"],
+    "clinic_api_dir": "clinic-api"
+  },
+  "cli_files": ["clinic-api/seed.py", "clinic-api/migrate_notifications.py", "tools/*", "scripts/*", "deploy/*"],
+  "test_data_paths": ["clinic-api/seed.py", "tests/golden/*"],
+  "requirements_files": [
+    "requirements.txt",
+    "clinic-api/requirements.txt",
+    "scripts/gate-requirements.txt",
+    "scripts/gate-requirements-ci.txt",
+    "scripts/gate-requirements-ai.txt"
+  ],
+  "protected_paths": [
+    "scripts/gate*",
+    "scripts/gate-contracts/*",
+    ".github/workflows/*",
+    ".github/CODEOWNERS",
+    ".github/pull_request_template.md",
+    ".claude/settings.json",
+    "CLAUDE.md",
+    "tests/golden/*"
+  ],
+  "required_files": [
+    "scripts/gate.sh",
+    "scripts/gate-report.py",
+    "scripts/gate-ai-review.py",
+    "scripts/gate_lib.py",
+    "scripts/gate_checks.py",
+    "scripts/gate_protect.py",
+    "scripts/gate_scan.py",
+    "scripts/gate_contracts.py",
+    "scripts/gate_hook.py",
+    "scripts/gate_label.py",
+    "scripts/gate_golden.py",
+    "scripts/gate-config.json",
+    "scripts/gate-baseline.json",
+    "scripts/gate-approved-test-data.json",
+    ".github/workflows/g1-gate.yml",
+    ".github/workflows/g2-ai-review.yml",
+    ".github/workflows/label-guard.yml",
+    ".claude/settings.json",
+    "CLAUDE.md",
+    "tests/golden/golden_set.json"
+  ],
+  "high_risk_paths": [
+    "agent/privacy.py",
+    "agent/call_audit.py",
+    "agent/tools_client.py",
+    "agent/llm.py",
+    "agent/reply_templates.py",
+    "agent/i18n.py",
+    "agent/language.py",
+    "agent/fast_path.py",
+    "agent/echo_guard.py",
+    "agent/audio_quality.py",
+    "clinic-api/verification.py",
+    "clinic-api/history_service.py",
+    "clinic-api/models.py",
+    "clinic-api/db.py",
+    "clinic-api/main.py",
+    "clinic-api/notifications.py",
+    "clinic-api/message_templates.py",
+    "main.py",
+    "main_pcm.py",
+    "deploy/*",
+    "requirements.txt",
+    "clinic-api/requirements.txt",
+    "scripts/gate*",
+    "scripts/gate-contracts/*",
+    ".github/*",
+    ".claude/settings.json",
+    "CLAUDE.md",
+    "tests/golden/*"
+  ],
+  "forbidden_file_globs": [
+    "*.db", "*.sqlite", "*.sqlite3", "*.db-journal", "*.db-wal",
+    "*.wav", "*.mp3", "*.flac", "*.ogg", "*.webm", "*.m4a",
+    "*.nemo", "*.pt", "*.pth", "*.ckpt", "*.onnx", "*.safetensors", "*.gguf",
+    "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*id_rsa*",
+    ".env", ".env.*", "*/.env", "*/.env.*",
+    "*.patch", "*.diff", "*.orig", "*.rej",
+    "*.tgz", "*.tar", "*.tar.gz", "*.zip", "*.7z", "*.b64",
+    "*.log", "*.csv", "*.xlsx",
+    "gate-report.json", "gate-report.md", "ai-review.json",
+    ".gate/*", ".gate-venv/*"
+  ],
+  "max_file_bytes": 1048576,
+  "allowed_top_level": [
+    "agent", "clinic-api", "deploy", "static", "tests", "tools", "scripts", ".github", ".claude",
+    "CLAUDE.md", "README.md", "requirements.txt", "setup_addon.sh", "main.py", "main_pcm.py",
+    "tts_server.py", ".gitignore", "*_implementation.md", "IMPLEMENTATION_*.md",
+    "barge_in_level_vs_correlation.md", "workLog.md"
+  ],
+  "workflow_policy": {
+    ".github/workflows/g1-gate.yml": {
+      "required_jobs": ["gate"],
+      "required_triggers": ["pull_request"],
+      "required_commands": ["bash scripts/gate.sh --full --ci", "actionlint"]
+    },
+    ".github/workflows/g2-ai-review.yml": {
+      "required_jobs": ["review"],
+      "required_triggers": ["workflow_run"],
+      "required_commands": ["scripts/gate-ai-review.py"]
+    },
+    ".github/workflows/label-guard.yml": {
+      "required_jobs": ["strip-manual-label", "evaluate"],
+      "required_triggers": ["workflow_run", "pull_request_target"],
+      "required_commands": ["scripts/gate_label.py", "scripts/gate_protect.py"]
+    }
+  },
+  "checks": {
+    "compile":            {"name": "Syntax / compile (Python, shell, YAML, JSON, TOML)", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "format":             {"name": "Formatting (ruff format)", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "lint":               {"name": "Lint (ruff)", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "typecheck":          {"name": "Type checking (mypy)", "category": "mechanical", "mandatory": true, "modes": ["full"]},
+    "dead-code":          {"name": "Unused imports / dead code (vulture, ruff F401/F811/F841)", "category": "mechanical", "mandatory": true, "modes": ["full"]},
+    "static-analysis":    {"name": "Static security analysis (bandit)", "category": "security", "mandatory": true, "modes": ["fast", "full"]},
+    "secrets":            {"name": "Secrets scan (gitleaks)", "category": "security", "mandatory": true, "modes": ["fast", "full"]},
+    "prod-credentials":   {"name": "Production credential scan", "category": "healthcare", "mandatory": true, "modes": ["fast", "full"]},
+    "dependency-audit":   {"name": "Dependency / vulnerability scan (pip-audit)", "category": "security", "mandatory": true, "modes": ["full"]},
+    "build":              {"name": "Build / package validation (generated-file sync, app import smoke)", "category": "mechanical", "mandatory": true, "modes": ["full"]},
+    "api-contract":       {"name": "API / schema contract validation", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "debug-code":         {"name": "Debug code, stray console output, untracked work markers", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "unexpected-files":   {"name": "Unexpected file changes", "category": "mechanical", "mandatory": true, "modes": ["fast", "full"]},
+    "phi-in-code":        {"name": "PHI in code", "category": "healthcare", "mandatory": true, "modes": ["fast", "full"]},
+    "phi-in-logs":        {"name": "PHI in logs / exception messages", "category": "healthcare", "mandatory": true, "modes": ["fast", "full"]},
+    "approved-test-data": {"name": "Approved (fictional) test data only", "category": "healthcare", "mandatory": true, "modes": ["fast", "full"]},
+    "gate-protection":    {"name": "Gate protection (weakened tests, bypasses, disabled CI)", "category": "gate", "mandatory": true, "modes": ["fast", "full"]},
+    "unit-tests":         {"name": "Unit tests", "category": "tests", "mandatory": true, "modes": ["full"]},
+    "integration-tests":  {"name": "Integration tests", "category": "tests", "mandatory": true, "modes": ["full"]},
+    "safety-policy":      {"name": "Safety-policy tests", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "phi-boundary":       {"name": "PHI boundary tests", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "multilingual-smoke": {"name": "Multilingual routing smoke tests", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "golden-set":         {"name": "Clinical golden-set regression", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "escalation-abstention": {"name": "Escalation / abstention tests", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "handoff-fallback":   {"name": "Human handoff / fallback tests", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "pstn-8khz":          {"name": "8 kHz / PSTN audio pipeline smoke test", "category": "healthcare", "mandatory": true, "modes": ["full"]},
+    "telephony":          {"name": "Telephony behaviour (DTMF, busy line, idle timeout, barge-in)", "category": "healthcare", "mandatory": true, "modes": ["full"]}
+  },
+  "suites": {
+    "unit-tests": {
+      "select": ["tests/*::*"],
+      "exclude": ["tests/test_notifications.py::*", "tests/test_history_verification.py::*", "tests/test_call_audit.py::*"],
+      "min_tests": 1
+    },
+    "integration-tests": {
+      "select": ["tests/test_notifications.py::*", "tests/test_history_verification.py::*", "tests/test_call_audit.py::*"],
+      "min_tests": 1
+    },
+    "safety-policy": {
+      "select": ["tests/test_gate_safety_policy.py::*", "tests/test_no_smartphone.py::*"],
+      "min_tests": 1
+    },
+    "phi-boundary": {
+      "select": ["tests/test_gate_phi_boundary.py::*", "tests/test_history_verification.py::*",
+                 "tests/test_call_audit.py::test_verification_answer_token_and_history_never_reach_the_record"],
+      "min_tests": 1
+    },
+    "multilingual-smoke": {
+      "select": ["tests/test_multilingual.py::*", "tests/test_gate_multilingual_routing.py::*"],
+      "min_tests": 1
+    },
+    "golden-set": {
+      "select": ["tests/test_gate_golden_set.py::*"],
+      "min_tests": 1
+    },
+    "escalation-abstention": {
+      "select": ["tests/test_gate_escalation.py::*", "tests/test_gate_golden_set.py::test_abstention*",
+                 "tests/test_audio_quality.py::test_*keypad*",
+                 "tests/test_audio_quality.py::test_first_failed_turn_asks_for_clarification",
+                 "tests/test_audio_quality.py::test_failures_must_be_consecutive_to_escalate"],
+      "min_tests": 1
+    },
+    "handoff-fallback": {
+      "select": ["tests/test_gate_handoff_fallback.py::*", "tests/test_no_smartphone.py::test_*counter*",
+                 "tests/test_history_verification.py::test_*counter*"],
+      "min_tests": 1
+    },
+    "pstn-8khz": {
+      "select": ["tests/test_gate_pstn_8khz.py::*"],
+      "min_tests": 1
+    },
+    "telephony": {
+      "select": ["tests/test_gate_telephony.py::*", "tests/test_speakerphone.py::*", "tests/test_noisy_turn_boundaries.py::*",
+                 "tests/test_call_audit.py::test_session_crash*", "tests/test_call_audit.py::test_hang_up*",
+                 "tests/test_call_audit.py::test_idle_timeout*", "tests/test_call_audit.py::test_a_caller_refused_at_capacity*",
+                 "tests/test_call_audit.py::test_barge_in*", "tests/test_audio_quality.py::test_keypad*"],
+      "min_tests": 1
+    }
+  },
+  "known_blockers": [
+    "No telephony/PSTN integration exists: the only transport is a browser WebSocket (main.py WebM, main_pcm.py raw PCM). The telephony suite exercises DTMF, busy-line, idle-timeout and barge-in behaviour over that transport and the 8 kHz suite exercises narrowband audio; SIP/RTP signalling cannot be tested until a telephony adapter exists.",
+    "No live human-transfer capability exists. Every failure path hands the caller to the clinic counter by spoken referral. The pre-recorded tool_failure clip is documented (agent/tts.py FALLBACK_FILES, README error table) as saying 'handing you to staff', a transfer the system cannot perform; the clip itself is not in the repository, so its content cannot be verified here.",
+    "G2 requires the repository secret ANTHROPIC_API_KEY; without it G2 fails closed and the label is withheld.",
+    "Branch protection (require the 'ready-for-human-review' status and code-owner review; restrict who can push to main) must be configured by a repository admin; it cannot be set from files in the repository.",
+    "No CODEOWNERS file: the senior engineers' GitHub handles are not known to this repository.",
+    "The clinical golden set covers the deterministic components (fast-path intent resolution and templated replies). LLM intent extraction is not golden-tested because it needs the Ollama model, which CI does not have.",
+    "Local (G0) type checking runs a pure-Python mypy build because this machine's Application Control policy blocks mypy's compiled extension; it is slower but reports the same errors."
+  ]
+}

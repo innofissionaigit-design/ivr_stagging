@@ -49,6 +49,8 @@ import time
 import urllib.error
 import urllib.request
 
+import numpy as np
+
 logger = logging.getLogger("semantic_cache")
 
 OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
@@ -226,10 +228,37 @@ def _unit(vec: list[float]) -> list[float]:
 
 
 class SemanticCache:
-    """Small, in-process, thread-safe. Brute-force scan on purpose: at the
-    capped size a full pass is ~2M multiply-adds, microseconds, and far
-    cheaper to reason about (and to evict correctly) than standing up a
-    vector store for what is at most a few thousand short questions."""
+    """Small, in-process, thread-safe. Brute-force scan on purpose: no
+    vector store to stand up for what is at most a few thousand short
+    questions, and eviction stays trivial to reason about.
+
+    ON "MICROSECONDS" -- THE ESTIMATE THIS CLASS WAS BUILT AROUND
+    ------------------------------------------------------------
+    That was the original justification for scanning while holding the
+    lock, and the arithmetic does not support it. At max_entries=2000 and
+    bge-m3's 1024 dimensions a full pass is ~2M multiply-adds, and in pure
+    Python -- `sum(a * b for a, b in zip(...))` over a list of floats -- that
+    is on the order of 100-300ms, not microseconds. Three to four orders of
+    magnitude out.
+
+    That mattered because the scan ran INSIDE self._lock, alongside
+    _entity_guard's difflib passes, which are also not cheap. So every
+    concurrent caller queued behind every other caller's scan, on a lock
+    taken once per turn. The cache built to save the slowest hop in the turn
+    was quietly adding a serialization point in front of it.
+
+    Two changes fix it without changing any cached-value semantics:
+
+      * vectors are kept as one contiguous float32 matrix, so the scan is a
+        single numpy matmul in C (~1-2ms at this size) instead of a Python
+        loop;
+      * the scan and the entity guard run OUTSIDE the lock. The lock is now
+        only ever held for O(1) dict work and an O(n) matrix rebuild that
+        happens at most once per mutation.
+
+    The matrix is rebuilt lazily, flagged by _matrix_dirty, because
+    _vectors is already rewritten wholesale on every put and drop.
+    """
 
     def __init__(self, threshold: float = DEFAULT_THRESHOLD,
                  max_entries: int = 2000, ttl_s: float = 6 * 3600):
@@ -239,6 +268,12 @@ class SemanticCache:
         self._lock = threading.Lock()
         self._exact: dict[str, dict] = {}          # normalized text -> entry
         self._vectors: list[tuple[list[float], str]] = []   # (unit vec, normalized text)
+        # Contiguous float32 mirror of _vectors, so the similarity scan is one
+        # numpy matmul instead of a Python loop. Rebuilt lazily on the first
+        # get() after any mutation; _matrix_dirty is set by every writer.
+        self._matrix: np.ndarray | None = None
+        self._matrix_keys: list[str] = []
+        self._matrix_dirty = False
         # Vectors computed by a get() that missed, held so the put() that
         # follows doesn't pay for the same embedding twice. Keyed by text,
         # NOT a single slot: concurrent calls interleave get/put freely, and
@@ -260,6 +295,25 @@ class SemanticCache:
     def _drop_locked(self, key: str):
         self._exact.pop(key, None)
         self._vectors = [(v, k) for v, k in self._vectors if k != key]
+        self._matrix_dirty = True
+
+    def _rebuild_matrix_locked(self):
+        """Mirror _vectors into one contiguous array. Callers hold the lock.
+
+        Rebuilt wholesale rather than patched incrementally: _vectors is
+        already rewritten wholesale by every writer, numpy has no cheap
+        in-place row delete, and at 2000x1024 float32 this is ~8MB of C-level
+        copying -- a few milliseconds, paid at most once per mutation.
+        """
+        if self._vectors:
+            self._matrix = np.asarray(
+                [v for v, _ in self._vectors], dtype=np.float32,
+            )
+            self._matrix_keys = [k for _, k in self._vectors]
+        else:
+            self._matrix = None
+            self._matrix_keys = []
+        self._matrix_dirty = False
 
     @staticmethod
     def _is_l2_eligible(value: dict) -> bool:
@@ -433,23 +487,49 @@ class SemanticCache:
                 self.stats["misses"] += 1
             return None, "miss"
 
+        # SNAPSHOT under the lock, SCAN outside it. Taking the matrix is an
+        # O(1) reference grab: writers REPLACE these attributes rather than
+        # mutating in place (see _rebuild_matrix_locked), so the array read
+        # below stays valid even if another thread swaps in a new one
+        # meanwhile. Worst case this turn scores against a snapshot that is
+        # one entry stale, which costs a cache miss -- never a wrong answer.
         with self._lock:
-            best_score, best_key = 0.0, None
-            for vec, cached_key in self._vectors:
-                score = sum(a * b for a, b in zip(probe, vec))
-                if score > best_score:
-                    best_score, best_key = score, cached_key
+            if self._matrix_dirty:
+                self._rebuild_matrix_locked()
+            matrix, keys = self._matrix, self._matrix_keys
 
-            if best_key is not None and best_score >= self.threshold:
+        best_score, best_key = 0.0, None
+        if matrix is not None and keys:
+            # Both sides are unit vectors (_unit() on store and on probe), so
+            # this dot product IS cosine similarity -- nothing to normalize.
+            scores = matrix @ np.asarray(probe, dtype=np.float32)
+            idx = int(np.argmax(scores))
+            best_score, best_key = float(scores[idx]), keys[idx]
+
+        if best_key is not None and best_score >= self.threshold:
+            with self._lock:
                 entry = self._exact.get(best_key)
                 if entry and self._expired(entry):
                     self._drop_locked(best_key)
-                elif entry and self._entity_guard(entry["value"], text):
-                    entry["last_used"] = time.time()
-                    self.stats["l2_hits"] += 1
-                    logger.info("semantic cache hit (%.3f): %r ~= %r", best_score, key, best_key)
-                    return entry["value"], "semantic"
+                    entry = None
+                candidate = entry["value"] if entry else None
 
+            # _entity_guard runs difflib over every window of the utterance,
+            # and it is the second slowest thing that used to hold the lock.
+            # It only reads its two arguments, so it is safe out here.
+            if candidate is not None and self._entity_guard(candidate, text):
+                with self._lock:
+                    # Re-check: the entry could have been evicted while the
+                    # guard ran. Gone means treat this as a miss.
+                    still = self._exact.get(best_key)
+                    if still is not None:
+                        still["last_used"] = time.time()
+                        self.stats["l2_hits"] += 1
+                        logger.info("semantic cache hit (%.3f): %r ~= %r",
+                                    best_score, key, best_key)
+                        return still["value"], "semantic"
+
+        with self._lock:
             self.stats["misses"] += 1
             # Stash the vector we just paid for, so put() doesn't re-embed.
             # Bounded: a get() whose put() never arrives (LLM failed, caller
@@ -457,7 +537,7 @@ class SemanticCache:
             if len(self._pending) > 64:
                 self._pending.clear()
             self._pending[key] = probe
-            return None, "miss"
+        return None, "miss"
 
     def put(self, text: str, value: dict):
         key = normalize_text(text)
@@ -477,6 +557,10 @@ class SemanticCache:
             self._vectors = [(v, k) for v, k in self._vectors if k != key]
             if vector is not None and self._is_l2_eligible(value):
                 self._vectors.append((vector, key))
+            # Set unconditionally: _evict_locked only marks it dirty when it
+            # actually drops something, and the common put changes _vectors
+            # without evicting anything at all.
+            self._matrix_dirty = True
             self._evict_locked()
 
     def snapshot(self) -> dict:

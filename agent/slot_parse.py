@@ -28,7 +28,17 @@ from __future__ import annotations
 import datetime
 import re
 
+from agent import language as _lang
+
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+
+# Every supported script's digits folded to ASCII in one table. Bengali
+# numerals are a subset of it, so every Bengali code path below behaves
+# exactly as it did; what is added is Devanagari (०१२३...), which a Hindi
+# ASR checkpoint emits and which would otherwise fall straight through
+# re.sub(r"\D") and leave a phone number one digit short. See
+# agent/language.py's digit_translation().
+_DIGITS = _lang.DIGITS_TO_ASCII
 
 _WEEKDAYS_BN = {
     "সোমবার": 0, "সোম": 0,
@@ -38,16 +48,50 @@ _WEEKDAYS_BN = {
     "শুক্রবার": 4, "শুক্র": 4,
     "শনিবার": 5, "শনি": 5,
     "রবিবার": 6, "রবি": 6,
+    # Hindi
+    "सोमवार": 0, "सोम": 0,
+    "मंगलवार": 1, "मंगल": 1,
+    "बुधवार": 2, "बुध": 2,
+    "गुरुवार": 3, "बृहस्पतिवार": 3, "गुरु": 3,
+    "शुक्रवार": 4, "शुक्र": 4,
+    "शनिवार": 5, "शनि": 5,
+    "रविवार": 6, "रवि": 6, "इतवार": 6,
+    # English. Full names only -- the three-letter forms ("sat", "sun",
+    # "mon") are substrings of ordinary words and this table is
+    # substring-matched.
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
 }
 
+# Bengali, Hindi and English share this table. Substring-matched, so the
+# entries must not be prefixes of unrelated words in ANY of the three --
+# which is why English uses whole words only and why "kal"/"कल" (Hindi for
+# both yesterday and tomorrow) is read as tomorrow: a caller booking an
+# appointment cannot mean yesterday.
 _RELATIVE_DAYS = {
+    # Bengali
     "আজ": 0, "আজকে": 0, "আজকেই": 0,
     "কাল": 1, "আগামীকাল": 1, "কালকে": 1,
     "পরশু": 2, "পরশুদিন": 2,
+    # Hindi
+    "आज": 0, "आज ही": 0,
+    "कल": 1, "आने वाले कल": 1,
+    "परसों": 2, "परसो": 2,
+    # English
+    "today": 0, "tomorrow": 1, "day after tomorrow": 2,
 }
+
+# Both tables above are matched as SUBSTRINGS, so they must be walked
+# longest-first or a short entry shadows a long one that contains it. Sorted
+# once at import rather than on every turn.
+_RELATIVE_DAYS_BY_LENGTH = tuple(sorted(_RELATIVE_DAYS.items(),
+                                        key=lambda kv: -len(kv[0])))
+_WEEKDAYS_BY_LENGTH = tuple(sorted(_WEEKDAYS_BN.items(),
+                                   key=lambda kv: -len(kv[0])))
 
 # Kept deliberately small and exact-match only (see is_affirmative /
 # is_negative below) -- these gate whole-utterance decisions like "abandon
+<<<<<<< HEAD
 # the booking flow" and, since the booking-readback story, "confirm the
 # write", so a false hit on a substring inside an unrelated reply (e.g. a
 # patient name that happens to contain "না") would be a much worse failure
@@ -84,6 +128,28 @@ _NEGATIVE = {
     # Hinglish / Banglish
     "nahi", "nahin", "na", "galat", "thik na", "thik nei",
 }
+=======
+# the booking flow", so a false hit on a substring inside an unrelated
+# reply (e.g. a patient name that happens to contain "না") would be a much
+# worse failure than occasionally not recognising a yes/no.
+_AFFIRMATIVE = {"হ্যাঁ", "হ্যা", "হুম", "হুঁ", "ঠিক", "ঠিক আছে", "ওই দিন", "ওইদিন",
+                "সেদিন", "সেদিনই", "সেই দিন", "চলবে", "ওকে", "হবে",
+                # Hindi
+                "हाँ", "हां", "जी", "जी हाँ", "ठीक", "ठीक है", "हूँ", "उसी दिन",
+                "वही दिन", "चलेगा", "ओके",
+                # English -- exact whole-utterance match, so short forms are
+                # safe here in a way they would not be in a substring table.
+                "yes", "yeah", "yep", "ok", "okay", "sure", "that day",
+                "that works", "fine", "alright"}
+_NEGATIVE = {"না", "নাহ", "না না", "লাগবে না", "থাক", "দরকার নেই", "ইচ্ছা নেই",
+             "না থাক", "লাগবে নাহ",
+             # Hindi
+             "नहीं", "ना", "नही", "नहीं चाहिए", "रहने दीजिए", "रहने दो",
+             "ज़रूरत नहीं", "जरूरत नहीं",
+             # English
+             "no", "nope", "not now", "no thanks", "no thank you",
+             "leave it", "don't", "dont"}
+>>>>>>> dev_chakravardhan
 
 
 def _strip(text: str) -> str:
@@ -171,11 +237,12 @@ def parse_date(text: str, today: datetime.date | None = None,
     that day or another one?") -- a bare affirmative reply ("হ্যাঁ", "ওই
     দিন") confirms THAT date, not literally "today"."""
     today = today or datetime.date.today()
-    t = text.translate(_BN_DIGITS).strip()
+    t = text.translate(_DIGITS).strip()
 
     if offered_date and is_affirmative(t):
         return offered_date
 
+<<<<<<< HEAD
     # story title: The model never originates a fact
     # user story: As a clinical lead, I want every price, date and identifier
     #   to come from a verified system response, so that a wrong answer is a
@@ -212,6 +279,20 @@ def parse_date(text: str, today: datetime.date | None = None,
     for word in sorted(_WEEKDAYS_BN, key=len, reverse=True):
         if _bn_bounded(word, t):
             days_ahead = (_WEEKDAYS_BN[word] - today.weekday()) % 7
+=======
+    # LONGEST PHRASE FIRST. These are substring matches, and several
+    # entries contain shorter ones: "day after tomorrow" contains
+    # "tomorrow", "আগামীকাল" contains "কাল". Iterating in table order made
+    # "day after tomorrow" resolve to tomorrow -- a caller booked a day
+    # early, with nothing in the transcript to show why.
+    for word, offset in _RELATIVE_DAYS_BY_LENGTH:
+        if word in t:
+            return (today + datetime.timedelta(days=offset)).isoformat()
+
+    for word, weekday in _WEEKDAYS_BY_LENGTH:
+        if word in t:
+            days_ahead = (weekday - today.weekday()) % 7
+>>>>>>> dev_chakravardhan
             days_ahead = days_ahead or 7  # naming today's weekday means NEXT week's
             return (today + datetime.timedelta(days=days_ahead)).isoformat()
 
@@ -307,7 +388,7 @@ def _extract_hour12_after(t: str, prefix: str) -> int | None:
 
 def parse_time(text: str) -> str | None:
     """-> "HH:MM" in 24h, or None if not confident."""
-    t = text.translate(_BN_DIGITS).strip()
+    t = text.translate(_DIGITS).strip()
 
     m = re.search(r"\b([01]?\d|2[0-3])[:.]([0-5]\d)\b", t)
     if m:
@@ -383,6 +464,7 @@ _DIGIT_WORD_RE = re.compile(r"\b(" + "|".join(_DIGIT_WORDS) + r")\b", re.IGNOREC
 
 def parse_phone(text: str) -> str | None:
     """-> a 10-digit phone number, or None if the utterance doesn't
+<<<<<<< HEAD
     contain enough digits to be one.
 
     UPDATED BY SOURAV -- fixes a real production bug, reported directly
@@ -432,6 +514,10 @@ def parse_phone(text: str) -> str | None:
         lambda m: _DIGIT_WORDS[m.group(1).lower()], translated,
     )
     digits = re.sub(r"\D", "", words_resolved)
+=======
+    contain enough digits to be one."""
+    digits = re.sub(r"\D", "", text.translate(_DIGITS))
+>>>>>>> dev_chakravardhan
     if len(digits) < 10:
         return None
     return digits[-10:]  # tolerate a spoken +91 / leading 0 trunk prefix

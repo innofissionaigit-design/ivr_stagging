@@ -1,0 +1,46 @@
+{
+  "_comment": "Approved FICTIONAL test data for the pre-human-review gate (scripts/gate_scan.py). Author: Chakravardhan. PROTECTED: any change sets gate_config_touched and needs a code owner. Every phone number, patient name and date of birth in tests/, tests/golden/ and clinic-api/seed.py must appear here; a scanner finding outside this list fails the gate. India has no reserved 'fictional' mobile range, so NEW fixtures must use phone_ranges (9000000000-9000009999) -- the explicit phones below are placeholder patterns (sequential or repeated digits) already used by the existing suite, listed one by one so that adding another needs owner approval. Never add a number, name or date copied from a real patient or caller.",
+  "phone_ranges": [
+    ["9000000000", "9000009999"]
+  ],
+  "phones": [
+    "9830012345",
+    "9876500001",
+    "9876500002",
+    "9876543210",
+    "9999999999"
+  ],
+  "names": [
+    "A {#var#} B",
+    "Arun Ghosh",
+    "Ashok Roy",
+    "Bela Mitra",
+    "Bench Patient",
+    "Bench Three",
+    "Bench Two",
+    "Dipa Roy",
+    "Iti Sen",
+    "Jaya Sen",
+    "Mita Kar",
+    "Nabin Pal",
+    "No Factors",
+    "Race Victim",
+    "Ranu Das",
+    "Riya Das",
+    "Second Caller",
+    "Someone Else",
+    "Sujata Bose",
+    "Tapan Nandi"
+  ],
+  "dates_of_birth": [
+    "1990-05-14"
+  ],
+  "email_domains": [
+    "example.com",
+    "example.net",
+    "example.org",
+    "test",
+    "invalid",
+    "example"
+  ]
+}

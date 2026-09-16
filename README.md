@@ -52,6 +52,65 @@ bash setup_db.sh          # installs Postgres, creates db/user, seeds data
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8080
 ```
 
+### History disclosed only after verification
+
+Past tests are never read out on the strength of the phone number alone --
+the handset is shared, so the number says which record to LOOK AT and nothing
+about who is holding the phone. Verification is knowledge-based (a PIN set at
+the counter, or a date of birth); **an SMS OTP is deliberately not used**,
+because the code goes to the same shared handset the caller is holding.
+
+Failures are indistinguishable to the caller -- a wrong PIN, an unknown number
+and a patient with no factor on file all get one sentence -- so the line cannot
+be used to find out whether somebody attends this clinic. Attempts are counted
+per patient, so redialling does not refill the budget, and every attempt lands
+in `disclosure_audit`.
+
+Disclosure is also blocked when the room is not private: `agent/privacy.py`
+uses the speakerphone classification `echo_guard.py` already computes, and
+treats an unclassified path as unsafe -- the one place this codebase
+deliberately disagrees with `reporting_path()`. See
+`history_verification_implementation.md`.
+
+### Every flow completes without a smartphone
+
+Payment and report collection now exist as flows, and both complete at the
+counter -- no link, no QR, no app, no portal. `tests/test_no_smartphone.py`
+walks **every** caller-facing string in every language and fails if one tells
+a caller to tap, scan or download anything, so the guarantee holds for flows
+that do not exist yet. Both branches survive clinic-api being unreachable:
+*how* you pay is clinic policy, not a database row.
+
+### Bengali, Hindi and English
+
+The reply strings live in `agent/i18n.py` (62 keys x 3 languages) and the
+language machinery in `agent/language.py`. **The default is Bengali-only and
+that is not a placeholder** -- the ASR checkpoint on this pod is
+`indicconformer_stt_bn_*`, and `language.enabled()` refuses to advertise a
+language whose ASR checkpoint is unset, so configuration cannot claim a
+capability the models do not have. See
+`no_smartphone_multilingual_implementation.md` for what turning Hindi on
+actually requires.
+
+### Written patient confirmations
+
+The confirmation number used to reach the patient exactly once, as spoken
+Bengali, and then it was gone -- while `reply_templates.py` had always asked
+for a phone number on the stated grounds that we would "send the
+confirmation" there. clinic-api now sends an SMS through the hospital
+gateway on **booking, reschedule and cancellation**, from DLT-registered
+templates in `clinic-api/message_templates.py`, and records every delivery
+receipt in a ledger (`notification_attempts`). Failures -- including the
+silent kind, where the gateway accepts a message and no receipt ever
+arrives -- surface at `GET /api/v1/notifications/failures` and in the
+`notifications` block of `/api/health`.
+
+Leaving `HOSPITAL_GATEWAY_URL` unset is a supported state: every message is
+recorded as `skipped` with the reason attached, and the voice agent stops
+promising callers an SMS. See `written_confirmation_implementation.md` for
+the full design, the config, and the one-shot schema migration an existing
+`clinic.db` needs (`clinic-api/migrate_notifications.py`).
+
 **A real bug caught in local testing, not hypothetical:** the first version
 matched a caller's doctor name against the *full* formatted name ("Dr. A.
 Sen"), and a query for a doctor who doesn't exist ("Doctor Nobody")
@@ -65,6 +124,24 @@ verified with a local SQLite-backed test suite before this was written up.
 That threshold is reasoned from a handful of test pairs, not measured
 against real call audio -- treat it with the same "LOW confidence, needs
 real samples" caution `gate.py`'s own floors are labelled with.
+
+### Every call leaves a complete record
+
+Every call -- answered, failed, abandoned, crashed, or turned away at capacity
+-- leaves a record in `call_audit.db`, beside `clinic.db` on the persistent
+volume: one row per call, and a numbered event for each step (what ASR heard,
+what intent and slots were detected and by which component, each clinic-api
+request and the response that **actually** came back, every sentence spoken
+and whether the caller heard it, errors, and how the call ended). Events are
+written where they happen -- in `main.py` and at the `ClinicToolsClient`
+boundary -- and never summarised by the LLM. A PIN or date of birth being
+checked, the history token, and the history itself are withheld.
+
+Staff read it at `GET /api/audit/calls` (`?status=failed`, `?status=error`)
+and `GET /api/audit/calls/{call_id}`, whose `integrity` block says whether the
+record is whole. Set `VOICE_AGENT_AUDIT_TOKEN` to require an `X-Audit-Token`
+header. Write failures never reach the caller; they surface under `audit` in
+`/api/health`. See `IMPLEMENTATION_CALL_AUDIT.md`.
 
 ## What's genuinely new here (no precedent to lean on)
 

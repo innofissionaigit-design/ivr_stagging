@@ -1,0 +1,19 @@
+# Runtime dependencies for running the test suite on a CPU-only CI runner.
+# Author: Chakravardhan
+#
+# These are the versions the suite was verified against locally (Python 3.14).
+# They are NOT the GPU pod's versions -- requirements.txt pins torch==2.1.0 for
+# the pod, which has no Python 3.14 wheel. The pod's own pins are still
+# vulnerability-audited by the dependency-audit check.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0
+numpy==2.4.6
+scipy==1.18.0
+soundfile==0.14.0
+fastapi==0.141.1
+starlette==1.3.1
+httpx==0.28.1
+sqlalchemy==2.0.52
+pydantic==2.13.4
+pytest==9.1.1
+PyYAML==6.0.3

@@ -1,0 +1,194 @@
+# Label guard -- the only thing allowed to apply `ready-for-human-review`.
+# Author: Chakravardhan
+#
+# The label is applied ONLY when all of these hold for the pull request's
+# current head commit:
+#   * every mandatory G1 check passed          (G1 report, conclusion success)
+#   * gate_config_touched == false             (recomputed here, trusted code)
+#   * tests_weakened == false                  (recomputed here, trusted code)
+#   * no gate bypass detected                  (recomputed here, trusted code)
+#   * unresolved Critical/High AI findings == 0 (G2 review of this head)
+#
+# The gate-protection analysis is recomputed from a trusted checkout of the
+# default branch because a pull request can edit its own G1 workflow; the G1
+# report is only trustworthy once we know the PR did not touch the gate.
+#
+# A label added by a person is removed. A new push removes the label until
+# the gates pass again. Without the label, senior review should not start --
+# enforce that by requiring the `ready-for-human-review` commit status in
+# branch protection (a repository-admin setting).
+#
+# PROTECTED FILE: editing it sets gate_config_touched.
+name: Label Guard
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled]
+  workflow_run:
+    workflows: ["G1 Gate", "G2 AI Review"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+  statuses: write
+
+env:
+  LABEL: ready-for-human-review
+
+jobs:
+  strip-manual-label:
+    name: Only CI may apply the label
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Remove a manually applied or stale label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          ACTION: ${{ github.event.action }}
+          ADDED: ${{ github.event.label.name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh label create "$LABEL" --repo "$REPO" --color 0E8A16 \
+            --description "All pre-human-review gates passed (applied by CI only)" --force > /dev/null
+          if [ "$ACTION" = labeled ] && [ "$ADDED" != "$LABEL" ]; then exit 0; fi
+          has="$(gh pr view "$PR" --repo "$REPO" --json labels --jq "[.labels[].name] | index(\"$LABEL\") != null")"
+          if [ "$has" = true ]; then
+            gh pr edit "$PR" --repo "$REPO" --remove-label "$LABEL"
+            if [ "$ACTION" = labeled ]; then
+              gh pr comment "$PR" --repo "$REPO" --body "The \`$LABEL\` label can only be applied by CI, after G1, G2 and gate protection pass for the current head commit. It has been removed."
+            fi
+          fi
+          gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" -f state=pending -f context="$LABEL" \
+            -f description="Waiting for G1, G2 and gate protection"
+
+  evaluate:
+    name: Evaluate label conditions
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the trusted gate scripts (default branch)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Identify the pull request head this run is about
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW: ${{ github.event.workflow_run.name }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [ "$WORKFLOW" = "G1 Gate" ]; then
+            sha="$RUN_HEAD_SHA"
+          else
+            # G2 runs on the default branch; the PR head it reviewed is in its artifact.
+            gh run download "$RUN_ID" --repo "$REPO" -n ai-review -D "$RUNNER_TEMP/g2probe" || true
+            sha="$(jq -r '.reviewed_head_sha // empty' "$RUNNER_TEMP/g2probe/ai-review.json" 2>/dev/null || true)"
+          fi
+          if [ -z "$sha" ]; then echo "Cannot determine the reviewed head; nothing to evaluate."; exit 0; fi
+          pr="$(gh api "repos/$REPO/commits/$sha/pulls" --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then echo "No open pull request for $sha."; exit 0; fi
+          gh api "repos/$REPO/pulls/$pr" > "$RUNNER_TEMP/pr.json"
+          current="$(jq -r .head.sha "$RUNNER_TEMP/pr.json")"
+          if [ "$current" != "$sha" ]; then echo "Head moved on ($current); this run is stale."; exit 0; fi
+          {
+            echo "number=$pr"
+            echo "head_sha=$sha"
+            echo "base_sha=$(jq -r .base.sha "$RUNNER_TEMP/pr.json")"
+            echo "head_repo=$(jq -r .head.repo.full_name "$RUNNER_TEMP/pr.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pull request (read as data, never executed)
+        if: steps.pr.outputs.head_sha != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Collect G1 and G2 results for this head
+        if: steps.pr.outputs.head_sha != ''
+        id: results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git -C pr fetch --no-tags "https://github.com/$REPO" "$BASE_SHA"
+          echo "merge_base=$(git -C pr merge-base "$BASE_SHA" "$HEAD_SHA")" >> "$GITHUB_OUTPUT"
+          g1="$(gh api "repos/$REPO/actions/workflows/g1-gate.yml/runs?head_sha=$HEAD_SHA&per_page=1" \
+                --jq '.workflow_runs[0] | "\(.id) \(.conclusion)"')"
+          g1_id="${g1%% *}"; g1_conclusion="${g1##* }"
+          echo "g1_conclusion=$g1_conclusion" >> "$GITHUB_OUTPUT"
+          mkdir -p g1 g2
+          if [ -n "$g1_id" ] && [ "$g1_id" != null ]; then
+            gh run download "$g1_id" --repo "$REPO" -n gate-report -D g1 || true
+          fi
+          for id in $(gh run list --repo "$REPO" --workflow g2-ai-review.yml --limit 30 \
+                        --json databaseId --jq '.[].databaseId'); do
+            rm -rf "$RUNNER_TEMP/g2try"
+            gh run download "$id" --repo "$REPO" -n ai-review -D "$RUNNER_TEMP/g2try" 2>/dev/null || continue
+            if [ "$(jq -r .reviewed_head_sha "$RUNNER_TEMP/g2try/ai-review.json")" = "$HEAD_SHA" ]; then
+              cp "$RUNNER_TEMP/g2try/ai-review.json" g2/ai-review.json
+              break
+            fi
+          done
+
+      - name: Set up Python
+        if: steps.pr.outputs.head_sha != ''
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Recompute gate protection with trusted code
+        if: steps.pr.outputs.head_sha != ''
+        env:
+          GATE_REPO: ${{ github.workspace }}/pr
+          GATE_CONFIG_DIR: ${{ github.workspace }}/trusted/scripts
+          MERGE_BASE: ${{ steps.results.outputs.merge_base }}
+        run: |
+          python -m pip install -q "PyYAML==6.0.3"
+          if python trusted/scripts/gate_protect.py --base "$MERGE_BASE" --out protect.json > /dev/null; then
+            echo "gate protection: clean"
+          else
+            echo "gate protection: weakening or bypass detected (see protect.json)"
+          fi
+
+      - name: Decide and apply the label
+        if: steps.pr.outputs.head_sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          G1_CONCLUSION: ${{ steps.results.outputs.g1_conclusion }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if python trusted/scripts/gate_label.py --head-sha "$HEAD_SHA" --g1-conclusion "$G1_CONCLUSION" \
+               --g1-report g1/gate-report.json --ai-review g2/ai-review.json --protect protect.json \
+               --out decision.json > /dev/null; then
+            gh pr edit "$PR" --repo "$REPO" --add-label "$LABEL"
+            gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" -f state=success -f context="$LABEL" \
+              -f description="G1, G2 and gate protection passed" -f target_url="$RUN_URL"
+          else
+            gh pr edit "$PR" --repo "$REPO" --remove-label "$LABEL" 2> /dev/null || true
+            reason="$(jq -r '.reasons[0] // "conditions not met"' decision.json | cut -c1-138)"
+            gh api -X POST "repos/$REPO/statuses/$HEAD_SHA" -f state=failure -f context="$LABEL" \
+              -f description="$reason" -f target_url="$RUN_URL"
+          fi
+          { echo '## Label decision'; echo '```json'; cat decision.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

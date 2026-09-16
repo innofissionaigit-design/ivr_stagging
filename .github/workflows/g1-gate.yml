@@ -1,0 +1,108 @@
+# G1 -- the deterministic gate. AUTHORITATIVE for mechanical correctness.
+# Author: Chakravardhan
+#
+# Runs `bash scripts/gate.sh --full --ci`: every mandatory check in
+# scripts/gate-config.json. The job fails if ANY mandatory check fails or
+# cannot run, and also when the change touches the gate's own files (exit 3,
+# BLOCKED) -- those changes need a code owner, not a green tick.
+#
+# PROTECTED FILE: editing it sets gate_config_touched and withholds the
+# ready-for-human-review label (see label-guard.yml).
+name: G1 Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: G1 deterministic gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GATE_CI: "1"
+      GATE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+      GATE_BUILD_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - name: Check out (full history, for the base comparison)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install system libraries
+        run: sudo apt-get update -q && sudo apt-get install -y -q libsndfile1
+
+      - name: Install application test dependencies (CPU-only)
+        run: python -m pip install -r scripts/gate-requirements-ci.txt
+
+      - name: Install gate tools (pinned)
+        run: python -m pip install -r scripts/gate-requirements.txt
+
+      - name: Install gitleaks and actionlint (checksum-verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz -C bin gitleaks
+          curl -sSfL -o actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz -C bin actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Lint workflow definitions (actionlint)
+        run: actionlint -color
+
+      - name: Run G1 -- full gate (authoritative)
+        env:
+          GATE_TOOL_PYTHON: python
+          GATE_GITLEAKS: ${{ runner.temp }}/bin/gitleaks
+        run: bash scripts/gate.sh --full --ci
+
+      - name: Publish the gate report to the job summary
+        if: always()
+        run: |
+          if [ -f gate-report.md ]; then
+            cat gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "gate-report.md was not produced -- the gate did not complete." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload the gate report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate-report
+          path: |
+            gate-report.json
+            gate-report.md
+            .gate/results/
+            .gate/protect.json
+            .gate/junit.xml
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30

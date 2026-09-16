@@ -27,8 +27,13 @@ account rather than assumed:
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 import logging
 import re
+=======
+import os
+import random
+>>>>>>> dev_chakravardhan
 import time
 import urllib.request
 
@@ -37,6 +42,7 @@ logger = logging.getLogger("llm")
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:7b"
 
+<<<<<<< HEAD
 # ADDED BY SOURAV -- "Lab Report Status & Secure Delivery" combined story
 # adds "report_status" (Rule 1-3, 13, 14) and "report_send" (Rule 4-9,
 # 15-17). Both reuse the EXISTING "test_name" and "phone" slots below --
@@ -155,6 +161,72 @@ _DATE_EXPR_LIST = ", ".join(sorted(DATE_EXPRESSIONS))
 # second (or third) question shows up in. parts[0] is guaranteed to mirror the
 # top level, so nothing downstream has to learn two shapes.
 SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's Bengali phone assistant. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched English words written in Bengali script.
+=======
+# PER-ATTEMPT ceiling, and the ceiling for the WHOLE turn across retries.
+#
+# These replace a bare 90s per-attempt timeout with no total cap. With
+# max_retries=2 (three attempts) that arrangement allowed a single turn to
+# occupy a worker for 270 SECONDS -- four and a half minutes of a live phone
+# call spent in silence behind the half-duplex gate, long past the point any
+# caller has hung up, while still holding its thread and its slot in Ollama's
+# queue the entire time.
+#
+# The 90s figure was calibrated against a COLD model: llm.py measured a
+# cold-loaded qwen2.5:7b at 47s just to answer "Say OK". That is the wrong
+# thing to size for now. OLLAMA_KEEP_ALIVE=-1 (see deploy/env.vast.sh) pins
+# the model resident, so cold starts are a startup-only event, and a warm
+# generation for this prompt measures ~1-3s.
+#
+# What actually produces a slow turn today is QUEUEING, not loading:
+# OLLAMA_NUM_PARALLEL=2 means only two generations run at once and the rest
+# wait INSIDE Ollama where this process cannot see them. A caller stuck in
+# that queue looks exactly like a cold start from here -- which is why a
+# timeout sized for cold starts is precisely the wrong backstop for it. It
+# lets the queue grow instead of shedding load, and every retry that fires
+# adds another entry to the same queue it is already stuck behind.
+#
+# 20s is still ~7x the warm path, so it does not trip on normal slowness; it
+# only fires when something is genuinely wrong. The 25s total budget is the
+# real protection: it bounds the whole turn regardless of how the retries
+# fall, so failing fast to the "একটু সমস্যা হচ্ছে" apology beats holding a
+# caller in silence. Both are env-tunable so they can be tightened against
+# real peak traffic without a redeploy.
+OLLAMA_TIMEOUT_S = float(os.environ.get("OLLAMA_TIMEOUT_S", "20"))
+OLLAMA_TURN_BUDGET_S = float(os.environ.get("OLLAMA_TURN_BUDGET_S", "25"))
+
+# Retry backoff. Previously there was none: a failed attempt re-fired the
+# instant it returned.
+#
+# That is the wrong reflex against this particular dependency. The failure
+# being retried is usually not "the request was lost" but "Ollama is at
+# OLLAMA_NUM_PARALLEL and everything else is queued behind it". Retrying
+# immediately adds another entry to the very queue that caused the failure,
+# and because every concurrent caller's retries fire on the same schedule
+# they arrive together -- a thundering herd, synchronized by the shared
+# outage that produced it. Load spikes hardest exactly when the service is
+# least able to absorb it.
+#
+# Exponential growth spreads the retries out; the jitter de-synchronizes
+# callers from each other so they stop arriving in a block. Both are small
+# because the whole turn budget is only OLLAMA_TURN_BUDGET_S -- this is
+# breathing room between attempts, not a real hold-off, and the sleep below
+# is always clamped so it can never eat the budget the next attempt needs.
+_BACKOFF_BASE_S = 0.25
+_BACKOFF_CAP_S = 2.0
+_BACKOFF_JITTER_S = 0.25
+
+
+def _backoff_s(attempt: int) -> float:
+    """Delay before the attempt AFTER this one. attempt is 1-based."""
+    return (min(_BACKOFF_BASE_S * (2 ** (attempt - 1)), _BACKOFF_CAP_S)
+            + random.uniform(0.0, _BACKOFF_JITTER_S))
+
+VALID_INTENTS = {"test_rate", "doctor_availability", "book_appointment",
+                 "doctors_by_department", "payment", "report_collection",
+                 "patient_history", "my_bookings", "smalltalk", "unclear"}
+
+SYSTEM_PROMPT_TEMPLATE = """You are the intent-and-slot extractor for a diagnostic clinic's phone assistant. Callers speak BENGALI, HINDI or ENGLISH, and often mix them -- an English clinical term inside a Bengali sentence is normal, not an error. You will be given ONE caller utterance, transcribed by automatic speech recognition from live phone audio -- it may contain ASR errors, missing punctuation, or code-switched words written in another script.
+>>>>>>> dev_chakravardhan
 
 You do NOT have a calendar and you are not given today's date. You never need one: when the caller mentions a day, you say WHICH EXPRESSION they used and a separate calculator works out the actual dates afterwards.
 
@@ -169,6 +241,7 @@ INTENTS (one per part -- see MULTI-PART below):
 - "doctor_schedule": caller is asking about a named doctor's GENERAL, RECURRING weekly schedule -- which day(s) of the week they usually sit, with NO reference to today/tomorrow/a specific date and NOT asking for the next available date either (e.g. "Dr Sen কবে বসেন", "ডাক্তার সেন কোন কোন দিন বসেন", "which days does Dr Sen sit", "Dr Sen ka schedule kya hai", "Dr Sen kon din boshen"). If the caller's question is tied to a specific day, or to "next available", use "doctor_availability" instead.
 - "doctors_by_department": caller is asking for doctors in a specific department (e.g., "ortho", "cardiology", "অর্থো").
 - "book_appointment": caller wants to book, confirm, or reschedule an appointment.
+<<<<<<< HEAD
 - "report_status": caller is asking whether their LAB REPORT is ready, not yet ready, still processing, or asking about it generally (e.g. "is my CBC report ready", "amar report ready hoyeche", "রিপোর্ট তৈরি হয়েছে?", "আসতে হবে নাকি রিপোর্ট হয়ে গেছে" -- asking to check before travelling counts as this intent too). Use this whenever the caller is asking ABOUT a report's status, even indirectly (e.g. asking whether they need to visit the clinic). Do NOT use this if they are asking about a test's PRICE or SAMPLE requirement instead -- those are "test_rate"/"test_sample".
 - "report_send": caller wants their report DELIVERED/SENT to them (e.g. "send my report", "report ta phone e pathiye dao", "রিপোর্টটা ফোনে পাঠিয়ে দিন", "amar report ta pete pari ki") -- opening directly with a delivery request, not first asking whether it's ready. If the caller only asks whether it's ready (with no request to send it), use "report_status" instead.
 - "health_package": caller is asking about a health checkup/screening PACKAGE (a bundle of tests sold together, e.g. "Diabetes Screening Package"), either about ONE named package (e.g. "diabetes package koto", "ডায়াবেটিস প্যাকেজে কি কি টেস্ট আছে", "what's in the full body package") or asking what packages exist AT ALL with none named (e.g. "what health packages do you have", "কি কি হেলথ প্যাকেজ আছে", "health package ache kina"). Do NOT use this for a question about a single, standalone lab test's price/sample/duration -- those are "test_rate"/"test_sample"/"test_duration".
@@ -191,6 +264,21 @@ SLOT RULES:
 - Only fill a slot if the caller's words support it. Leave it null rather than inferring.
 - "date_expr": if the caller referred to a day or a period, name it using EXACTLY ONE of these values and nothing else: {date_expr_list}. NEVER output a calendar date -- not in this field, not anywhere. You have no way to know what today is, so any yyyy-mm-dd you produced would be invented. Examples: আজ -> "today", কাল/আগামীকাল -> "tomorrow", পরশু -> "day_after_tomorrow", আগামী সপ্তাহে -> "next_week", আগামী শনিবার -> "next_saturday", শনিবার -> "saturday". If the caller DID refer to a day but none of the values above fit it, use "other" -- never guess a value that is merely close. If the caller mentioned no day at all, leave it null -- do not assume "today".
 - "date": ONLY if the caller spoke a calendar date out loud ("১৫ তারিখ", "তেসরা সেপ্টেম্বর"), copy their words EXACTLY as they said them, the same way you copy a test name. Do not convert it to digits or to any date format. Otherwise null.
+=======
+- "payment": caller is asking HOW to pay, whether payment is needed in advance, or what payment methods are accepted (e.g. "কীভাবে টাকা দেব", "पैसे कैसे देने हैं", "do I need to pay online"). Asking only the PRICE of a test is "test_rate", not this.
+- "report_collection": caller is asking when a report will be ready, or how to collect it (e.g. "রিপোর্ট কবে পাব", "रिपोर्ट कब मिलेगी", "how do I get my report").
+- "patient_history": caller is asking about their OWN past tests or records (e.g. "আমার আগের টেস্টগুলো", "मेरी पिछली रिपोर्ट", "what tests have I had"). Asking when a report will be READY is "report_collection", not this.
+- "my_bookings": caller is asking what appointments they ALREADY have booked, or when their
+  existing appointment is (e.g. "আমার কী কী বুকিং আছে", "আমার অ্যাপয়েন্টমেন্ট কবে",
+  "मेरी अपॉइंटमेंट कब है", "what have I booked"). Asking to MAKE a new booking is
+  "book_appointment", not this.
+- "smalltalk": greeting, thanks, or anything with no clinic-data lookup needed. You MAY write a short, warm reply yourself, IN THE CALLER'S OWN LANGUAGE, for this case only.
+- "unclear": you cannot confidently tell what the caller wants, or the utterance is empty/garbled ASR noise.
+
+SLOT RULES:
+- Only fill a slot if the caller's words support it. Leave it null rather than inferring.
+- "date": resolve relative time words in any of the three languages (আজ / आज / today = today, কাল / कल / tomorrow, পরশু / परसों / day after tomorrow, this/next weekday names) to an ISO yyyy-mm-dd using today's date above. If no date is mentioned for an availability/booking request, leave it null -- do not assume "today".
+>>>>>>> dev_chakravardhan
 - "test_name" / "doctor_name": copy the term as the caller said it (Bengali or transliterated English), do not translate or normalize it -- the lookup service handles matching.
 - "department": copy the department name as the caller said it (e.g., "ortho", "cardiology", "অর্থোপেডিক্স"), do not translate or normalize it -- the lookup service handles matching.
 - "phone": only if a phone number is explicitly spoken, digits only.
@@ -213,7 +301,11 @@ MULTI-PART: a caller in a hurry may ask more than one distinct, independent ques
 
 Output ONLY a single valid JSON object, no other text, in exactly this shape:
 {{
+<<<<<<< HEAD
   "intent": "test_rate" | "test_sample" | "test_duration" | "test_preparation" | "doctor_availability" | "doctor_schedule" | "doctors_by_department" | "book_appointment" | "report_status" | "report_send" | "health_package" | "clinic_info" | "walkin_eligibility" | "prescription_requirements" | "insurance_coverage" | "billing_balance" | "compare_options" | "request_callback" | "smalltalk" | "out_of_scope" | "unclear",
+=======
+  "intent": "test_rate" | "doctor_availability" | "doctors_by_department" | "book_appointment" | "payment" | "report_collection" | "patient_history" | "my_bookings" | "smalltalk" | "unclear",
+>>>>>>> dev_chakravardhan
   "slots": {{
     "test_name": string or null,
     "doctor_name": string or null,
@@ -248,12 +340,9 @@ class ExtractionError(Exception):
     pass
 
 
-def _call_ollama(prompt: str, timeout_s: int = 90) -> str:
-    # 90s, not 20s: a cold-loaded Qwen2.5:7b (Ollama unloaded it after its
-    # default 5-minute idle timeout) measured at 47s just to answer "Say
-    # OK" on this pod. The real fix is OLLAMA_KEEP_ALIVE keeping the model
-    # resident (see setup docs) so this path is rarely hit in practice --
-    # this margin is a backstop for whenever it still is.
+def _call_ollama(prompt: str, timeout_s: float = OLLAMA_TIMEOUT_S) -> str:
+    # See OLLAMA_TIMEOUT_S / OLLAMA_TURN_BUDGET_S above for why this is no
+    # longer the old cold-start-sized 90s.
     payload = json.dumps({
         "model": OLLAMA_MODEL,
         "prompt": prompt,
@@ -394,23 +483,54 @@ def extract_intent(transcript_bn: str, max_retries: int = 2) -> tuple[dict, dict
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(date_expr_list=_DATE_EXPR_LIST)
     prompt = f"{system_prompt}\n\nCALLER UTTERANCE (Bengali, ASR output):\n{transcript_bn}\n\nJSON:"
 
-    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": []}
+    diagnostics = {"attempts": 0, "total_time_s": 0.0, "errors": [], "budget_exhausted": False}
     last_error = None
 
+    # monotonic, not time.time(): this measures a duration, and a wall-clock
+    # step (NTP correction) must not be able to extend or collapse a live
+    # caller's budget.
+    deadline = time.monotonic() + OLLAMA_TURN_BUDGET_S
+
     for attempt in range(1, max_retries + 2):
+        remaining = deadline - time.monotonic()
+        # Never start an attempt that cannot meaningfully finish. Without
+        # this the last retry fires with a sliver of budget, fails on
+        # timeout, and buys nothing except one more entry in Ollama's queue
+        # at the exact moment that queue is what is already hurting.
+        if remaining <= 0.5:
+            diagnostics["budget_exhausted"] = True
+            diagnostics["errors"].append(
+                f"turn budget {OLLAMA_TURN_BUDGET_S:.0f}s exhausted before attempt {attempt}",
+            )
+            break
+
         diagnostics["attempts"] = attempt
-        t0 = time.time()
+        t0 = time.monotonic()
         try:
-            raw = _call_ollama(prompt)
-            diagnostics["total_time_s"] += time.time() - t0
+            # Clamp to whatever budget is actually left, so no single
+            # attempt can overrun the turn as a whole.
+            raw = _call_ollama(prompt, timeout_s=min(OLLAMA_TIMEOUT_S, remaining))
+            diagnostics["total_time_s"] += time.monotonic() - t0
             data = json.loads(raw)
             ok, errors = _validate(data)
             if not ok:
                 raise ValueError(f"schema validation failed: {errors}")
             return data, diagnostics
         except Exception as e:  # noqa: BLE001 - retry on anything, log it
-            diagnostics["total_time_s"] += time.time() - t0
+            diagnostics["total_time_s"] += time.monotonic() - t0
             last_error = e
             diagnostics["errors"].append(f"attempt {attempt}: {type(e).__name__}: {e}")
 
-    raise ExtractionError(f"intent extraction failed after {diagnostics['attempts']} attempts: {last_error}")
+            # Back off before the next attempt, clamped so the wait can never
+            # consume budget the retry itself needs. Blocking sleep is fine:
+            # this runs on the dedicated HTTP pool (agent/executors.py), not
+            # on the event loop and not on the audio path.
+            budget_left = deadline - time.monotonic()
+            if budget_left > 0.5:
+                time.sleep(min(_backoff_s(attempt), budget_left - 0.5))
+
+    raise ExtractionError(
+        f"intent extraction failed after {diagnostics['attempts']} attempt(s) in "
+        f"{diagnostics['total_time_s']:.1f}s"
+        f"{' (turn budget exhausted)' if diagnostics['budget_exhausted'] else ''}: {last_error}",
+    )

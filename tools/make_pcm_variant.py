@@ -91,6 +91,17 @@ HELLO_NEW = '''    if msg.get("type") == "playback_done":
         logger.info("[%s] transport: %s @ %dHz", session.call_id,
                     msg.get("format", "pcm_s16le"), rate)'''
 
+MIC_TAIL_NEW = '''    sr = session.audio.sample_rate
+    n = int(seconds * sr)
+    total = len(session.audio)
+    if total < n:
+        return None
+    tail = session.audio.tail_tensor((total - n) / sr)
+    if tail.numel() == 0:
+        return None
+    return tail.numpy(), sr'''
+
+
 POLL_NEW = '''        sr = session.audio.sample_rate
         tail = session.audio.tail_tensor(session.processed_until_s)
         if tail.numel() < int(0.2 * sr):
@@ -162,8 +173,24 @@ def main() -> None:
         "        result",
         POLL_NEW, "poll")
 
+    rep("    if not await _decode_to_wav(session.raw_path, session.wav_path):\n"
+        "        return None\n"
+        "    wav, sr = await asyncio.to_thread(torchaudio.load, session.wav_path)\n"
+        "    wav = wav.mean(dim=0) if wav.shape[0] > 1 else wav.squeeze(0)\n"
+        "    n = int(seconds * sr)\n"
+        "    if wav.shape[-1] < n:\n"
+        "        return None\n"
+        "    return wav[-n:].numpy(), sr",
+        MIC_TAIL_NEW, "mic tail")
+
     rep('    if msg.get("type") == "playback_done":\n        session.release_gate()',
         HELLO_NEW, "hello")
+
+    rep("TAIL_READ_IS_CHEAP = False",
+        "TAIL_READ_IS_CHEAP = True   # raw PCM: reading the tail is a slice, not a decode",
+        "tail cost")
+
+    rep('AUDIT_TRANSPORT = "webm"', 'AUDIT_TRANSPORT = "pcm"', "audit transport")
 
     rep('app.mount("/", StaticFiles(directory="static", html=True), name="static")',
         'app.mount("/", StaticFiles(directory="static/pcm", html=True), name="static")',
